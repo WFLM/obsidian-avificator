@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-avificator",
+  "name": "Obsidian AVIFicator",
+  "version": "0.0.1",
+  "minAppVersion": "0.15.0",
+  "description": "Automatically converts inserted images to AVIF using ImageMagick and renames them based on the note title and timestamp.",
+  "author": "WFLM",
+  "authorUrl": "https://github.com/wflm",
+  "main": "main.js"
+}
