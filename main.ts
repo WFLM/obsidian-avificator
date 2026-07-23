@@ -1,12 +1,36 @@
-import { Plugin, TFile, Notice, App, PluginSettingTab, Setting } from "obsidian";
-import { exec } from "child_process";
-import { promisify } from "util";
-const execAsync = promisify(exec);
+import {
+  Plugin,
+  TFile,
+  Notice,
+  App,
+  PluginSettingTab,
+  Setting,
+  FileSystemAdapter,
+  TAbstractFile,
+  getLinkpath,
+} from "obsidian";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import {
+  replaceImageEmbedLinks,
+  sanitizeFileStem,
+  type LinkReplacementResult,
+} from "./link-utils";
 
-const COMMAND_TEMPLATE = 'magick "{input_full_path}" -quality {quality} "{output_full_path}"';
+const execFileAsync = promisify(execFile);
+const SUPPORTED_IMAGE_EXTENSIONS = /^(png|jpe?g|webp|heic)$/i;
+const CONVERSION_TIMEOUT_MS = 120_000;
+const LINK_RETRY_COUNT = 10;
+const LINK_RETRY_DELAY_MS = 250;
 
 interface AVIFPluginSettings {
   quality: number;
+}
+
+interface OutputTarget {
+  fileName: string;
+  fullPath: string;
+  vaultPath: string;
 }
 
 const DEFAULT_SETTINGS: AVIFPluginSettings = {
@@ -27,85 +51,305 @@ function generateTimestamp(): string {
   );
 }
 
-async function wait(ms: number) {
+function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export default class AVIFOnInsertPlugin extends Plugin {
-  settings: AVIFPluginSettings;
+  settings: AVIFPluginSettings = { ...DEFAULT_SETTINGS };
+  private readonly noteQueues = new Map<string, Promise<void>>();
+  private readonly reservedOutputPaths = new Set<string>();
 
-  async onload() {
+  // Serializes read-modify-write operations per note so concurrent image
+  // conversions (e.g. dropping several images at once) can't race on the
+  // same note content and overwrite each other's link replacement.
+  private queueNoteOperation<T>(notePath: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.noteQueues.get(notePath) ?? Promise.resolve();
+    const run = previous.then(operation, operation);
+    const settled = run.then(
+      () => undefined,
+      () => undefined
+    );
+    this.noteQueues.set(notePath, settled);
+    void settled.then(() => {
+      if (this.noteQueues.get(notePath) === settled) {
+        this.noteQueues.delete(notePath);
+      }
+    });
+    return run;
+  }
+
+  async onload(): Promise<void> {
     await this.loadSettings();
 
     this.addSettingTab(new AVIFSettingTab(this.app, this));
 
-    this.registerEvent(
-      this.app.vault.on("create", async (file) => {
-        if (!(file instanceof TFile)) return;
-        if (!file.extension.match(/^(png|jpe?g|webp|heic)$/i)) return;
+    this.app.workspace.onLayoutReady(() => {
+      this.registerEvent(
+        this.app.vault.on("create", (file) => {
+          void this.handleCreatedFile(file).catch((error: unknown) => {
+            console.error("AVIF create handler failed", {
+              error,
+              filePath: file.path,
+            });
+          });
+        })
+      );
+    });
+  }
 
-        const activeNote = this.app.workspace.getActiveFile();
-        if (!activeNote || activeNote.extension !== "md") return;
+  private async handleCreatedFile(file: TAbstractFile): Promise<void> {
+    if (!(file instanceof TFile)) return;
+    if (!SUPPORTED_IMAGE_EXTENSIONS.test(file.extension)) return;
 
-        const adapter = this.app.vault.adapter;
-        const inputFullPath = await adapter.getFullPath(file.path);
-        const folderPath = file.path.substring(0, file.path.lastIndexOf("/") + 1);
+    const sourceNote = this.app.workspace.getActiveFile();
+    if (!sourceNote || sourceNote.extension !== "md") return;
 
-        const noteTitle = activeNote.basename.replace(/ /g, "_");
-        const timestamp = generateTimestamp();
-        const outputFileName = `${noteTitle}-${timestamp}.avif`;
-        const outputPath = folderPath + outputFileName;
-        const outputFullPath = await adapter.getFullPath(outputPath);
-
-        const command = COMMAND_TEMPLATE
-          .replace("{input_full_path}", inputFullPath)
-          .replace("{output_full_path}", outputFullPath)
-          .replace("{quality}", this.settings.quality.toString());
-
-        try {
-          await execAsync(command);
-          await this.app.vault.delete(file);
-
-          await this.replaceLinkWithRetry(activeNote, file.name, outputFileName);
-        } catch (err) {
-          console.error("❌ Error during AVIF conversion:", err);
-          new Notice("❌ Error during AVIF conversion");
-        }
-      })
+    await this.queueNoteOperation(sourceNote.path, () =>
+      this.convertLinkedImage(file, sourceNote)
     );
   }
 
-  async replaceLinkWithRetry(
-    note: TFile,
-    originalName: string,
-    outputFileName: string,
-    retries = 5,
-    delay = 500
-  ): Promise<boolean> {
-    const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const escapedOriginalName = escapeRegExp(originalName);
-    const regex = new RegExp(`!\\[\\[${escapedOriginalName}\\]\\]`, "g");
-
-    for (let i = 0; i < retries; i++) {
-      let content = await this.app.vault.read(note);
-      if (regex.test(content)) {
-        content = content.replace(regex, `![[${outputFileName}]]`);
-        await this.app.vault.modify(note, content);
-        new Notice(`✅ Converted: ${outputFileName}`);
-        return true;
-      }
-      await wait(delay);
+  private async convertLinkedImage(file: TFile, sourceNote: TFile): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) {
+      new Notice("AVIF conversion requires a desktop file-system vault");
+      return;
     }
-    new Notice("❌ Failed to update link after retries");
+
+    let outputTarget: OutputTarget | null = null;
+    let linkUpdated = false;
+
+    try {
+      const isLinked = await this.waitForImageLink(sourceNote, file);
+      if (!isLinked) return;
+
+      outputTarget = await this.reserveOutputTarget(adapter, file, sourceNote);
+      const inputFullPath = adapter.getFullPath(file.path);
+
+      await execFileAsync(
+        "magick",
+        [
+          inputFullPath,
+          "-quality",
+          this.settings.quality.toString(),
+          outputTarget.fullPath,
+        ],
+        {
+          timeout: CONVERSION_TIMEOUT_MS,
+          windowsHide: true,
+        }
+      );
+
+      if (!(await adapter.exists(outputTarget.vaultPath))) {
+        throw new Error(`ImageMagick did not create ${outputTarget.vaultPath}`);
+      }
+
+      linkUpdated = await this.replaceLinkWithRetry(
+        sourceNote,
+        file,
+        outputTarget.fileName
+      );
+      if (!linkUpdated) {
+        await this.removeGeneratedOutput(adapter, outputTarget.vaultPath);
+        new Notice("AVIF link was not updated; the original image was preserved");
+        return;
+      }
+
+      await this.app.vault.delete(file);
+      new Notice(`Converted: ${outputTarget.fileName}`);
+    } catch (error: unknown) {
+      if (outputTarget && !linkUpdated) {
+        await this.removeGeneratedOutputSafely(adapter, outputTarget.vaultPath);
+      }
+
+      console.error("AVIF conversion failed", {
+        error,
+        imagePath: file.path,
+        notePath: sourceNote.path,
+      });
+      new Notice(
+        linkUpdated
+          ? "AVIF was created, but the original image could not be removed"
+          : "AVIF conversion failed; the original image was preserved"
+      );
+    } finally {
+      if (outputTarget) {
+        this.reservedOutputPaths.delete(outputTarget.vaultPath);
+      }
+    }
+  }
+
+  private async reserveOutputTarget(
+    adapter: FileSystemAdapter,
+    file: TFile,
+    sourceNote: TFile
+  ): Promise<OutputTarget> {
+    const folderPath = file.path.substring(0, file.path.lastIndexOf("/") + 1);
+    const noteTitle = sanitizeFileStem(sourceNote.basename);
+    const baseName = `${noteTitle}-${generateTimestamp()}`;
+
+    for (let suffix = 0; ; suffix += 1) {
+      const uniqueSuffix = suffix === 0 ? "" : `-${suffix}`;
+      const fileName = `${baseName}${uniqueSuffix}.avif`;
+      const vaultPath = folderPath + fileName;
+
+      if (
+        !this.reservedOutputPaths.has(vaultPath) &&
+        !(await adapter.exists(vaultPath))
+      ) {
+        this.reservedOutputPaths.add(vaultPath);
+        return {
+          fileName,
+          fullPath: adapter.getFullPath(vaultPath),
+          vaultPath,
+        };
+      }
+    }
+  }
+
+  private async waitForImageLink(note: TFile, file: TFile): Promise<boolean> {
+    for (let attempt = 0; attempt < LINK_RETRY_COUNT; attempt += 1) {
+      const content = await this.app.vault.read(note);
+      const result = this.replaceImageLinks(content, note, file, file.name);
+      if (result.replacementCount > 0) return true;
+
+      if (attempt < LINK_RETRY_COUNT - 1) {
+        await wait(LINK_RETRY_DELAY_MS);
+      }
+    }
     return false;
   }
 
-  async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  private async replaceLinkWithRetry(
+    note: TFile,
+    originalFile: TFile,
+    outputFileName: string
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < LINK_RETRY_COUNT; attempt += 1) {
+      const currentContent = await this.app.vault.read(note);
+      const preview = this.replaceImageLinks(
+        currentContent,
+        note,
+        originalFile,
+        outputFileName
+      );
+
+      if (preview.replacementCount > 0) {
+        let replacementCount = 0;
+        await this.app.vault.process(note, (latestContent) => {
+          const result = this.replaceImageLinks(
+            latestContent,
+            note,
+            originalFile,
+            outputFileName
+          );
+          replacementCount = result.replacementCount;
+          return result.content;
+        });
+        if (replacementCount > 0) return true;
+      }
+
+      if (attempt < LINK_RETRY_COUNT - 1) {
+        await wait(LINK_RETRY_DELAY_MS);
+      }
+    }
+    return false;
   }
 
-  async saveSettings() {
+  private replaceImageLinks(
+    content: string,
+    note: TFile,
+    originalFile: TFile,
+    outputFileName: string
+  ): LinkReplacementResult {
+    return replaceImageEmbedLinks(
+      content,
+      outputFileName,
+      (target) => this.linkResolvesToFile(target, note, originalFile)
+    );
+  }
+
+  private linkResolvesToFile(target: string, note: TFile, file: TFile): boolean {
+    const decodedTarget = this.decodeLinkTarget(target);
+    const linkPath = getLinkpath(decodedTarget)
+      .replace(/\\/g, "/")
+      .replace(/^\.?\//, "");
+    const destination = this.app.metadataCache.getFirstLinkpathDest(linkPath, note.path);
+
+    if (destination) {
+      return destination.path === file.path;
+    }
+    if (linkPath === file.path) {
+      return true;
+    }
+    if (linkPath !== file.name) {
+      return false;
+    }
+
+    const filesWithSameName = this.app.vault
+      .getFiles()
+      .filter((candidate) => candidate.name === file.name);
+    return filesWithSameName.length === 1;
+  }
+
+  private decodeLinkTarget(target: string): string {
+    try {
+      return decodeURIComponent(target);
+    } catch {
+      return target;
+    }
+  }
+
+  private async removeGeneratedOutput(
+    adapter: FileSystemAdapter,
+    outputPath: string
+  ): Promise<void> {
+    if (await adapter.exists(outputPath)) {
+      await adapter.remove(outputPath);
+    }
+  }
+
+  private async removeGeneratedOutputSafely(
+    adapter: FileSystemAdapter,
+    outputPath: string
+  ): Promise<void> {
+    try {
+      await this.removeGeneratedOutput(adapter, outputPath);
+    } catch (cleanupError: unknown) {
+      console.error("Failed to remove generated AVIF output", {
+        cleanupError,
+        outputPath,
+      });
+    }
+  }
+
+  async loadSettings(): Promise<void> {
+    const storedData: unknown = await this.loadData();
+    const storedQuality =
+      typeof storedData === "object" && storedData !== null && "quality" in storedData
+        ? (storedData as Record<string, unknown>).quality
+        : undefined;
+
+    this.settings = {
+      quality: this.validateQuality(storedQuality) ?? DEFAULT_SETTINGS.quality,
+    };
+  }
+
+  async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+  }
+
+  validateQuality(value: unknown): number | null {
+    if (
+      typeof value !== "number" ||
+      !Number.isInteger(value) ||
+      value < 0 ||
+      value > 100
+    ) {
+      return null;
+    }
+    return value;
   }
 }
 
@@ -132,9 +376,10 @@ class AVIFSettingTab extends PluginSettingTab {
           .setPlaceholder("Enter quality (0-100)")
           .setValue(this.plugin.settings.quality.toString())
           .onChange(async (value) => {
-            const num = parseInt(value);
-            if (!isNaN(num) && num >= 0 && num <= 100) {
-              this.plugin.settings.quality = num;
+            const quality =
+              value.trim() === "" ? null : this.plugin.validateQuality(Number(value));
+            if (quality !== null) {
+              this.plugin.settings.quality = quality;
               text.inputEl.style.borderColor = "";
               await this.plugin.saveSettings();
             } else {

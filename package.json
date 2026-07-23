@@ -1,12 +1,17 @@
 {
   "name": "obsidian-avificator",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Obsidian plugin to convert images to AVIF automatically",
   "main": "main.js",
   "scripts": {
-    "build": "node build.js"
+    "build": "npm run check && node build.js",
+    "check": "tsc --noEmit",
+    "test": "tsc --ignoreConfig --module node16 --moduleResolution node16 --target ES2020 --types node --outDir .test-dist link-utils.ts link-utils.test.ts && node .test-dist/link-utils.test.js"
   },
   "devDependencies": {
-    "esbuild": "^0.17.19"
+    "@types/node": "^26.1.1",
+    "esbuild": "^0.28.1",
+    "obsidian": "^1.13.1",
+    "typescript": "^7.0.2"
   }
 }

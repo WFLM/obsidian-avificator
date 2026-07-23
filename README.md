@@ -1,51 +1,83 @@
 # Obsidian AVIF Image Converter
-Automatically converts newly added PNG, JPEG, and WEBP images in your notes to AVIF format using ImageMagick (magick command).
 
-### Features:
+Automatically converts newly added PNG, JPEG, WEBP, and HEIC images in your
+notes to AVIF format using ImageMagick (`magick` command).
+
+## Features
+
 - Converts images right after you add them to a note.
-- Output file is renamed to include the note’s title and a precise timestamp.
-- Automatically updates the link in your note to point to the new AVIF file.
-- Lets you configure AVIF image quality (0–100) in plugin settings.
+- Renames the output file using the note title and a precise timestamp.
+- Updates Obsidian wiki embeds and Markdown image links.
+- Keeps the original image if conversion or link replacement fails.
+- Lets you configure AVIF image quality from 0 to 100.
 
-### Installation
+## Installation
 
-#### 1. Clone or download the plugin source to your Obsidian plugins folder:
-```bash
+The plugin requires Obsidian Desktop 1.1.0 or newer. Node.js and npm are
+required to build it from source.
+
+### 1. Clone or download the plugin
+
+Place the repository in your Obsidian plugins folder:
+
+```text
 .obsidian/plugins/obsidian-avificator/
 ```
 
-#### 2. Build the plugin (if needed):
+### 2. Build the plugin
+
 ```bash
 npm install
 npm run build
 ```
-#### 3. ImageMagick Requirements
-To convert images to AVIF, your system must have ImageMagick (magick command) installed with AVIF support enabled.
-Check support:
+
+The build creates `main.js` in the plugin folder.
+
+### 3. Install ImageMagick
+
+ImageMagick 7 must be installed with the `magick` command available in `PATH`.
+Its build must support writing AVIF files and reading every input format you
+want to convert.
+
+Check AVIF and HEIC support:
+
 ```bash
-magick -list format | grep -i avif
+magick identify -list format | grep -Ei "AVIF|HEIC"
 ```
-You should see:
-```txt
-AVIF* rw+   AV1 Image File Format (AVIF)
-```
-If it isn't listed, your ImageMagick build lacks AVIF support. On Debian or Ubuntu, [IMEI](https://github.com/SoftCreatR/imei) can build ImageMagick with it.
 
+The `AVIF` entry must include write support. The `HEIC` entry must include read
+support if you want to convert HEIC files.
 
-#### 4. Enable the plugin in Obsidian settings → Community plugins.
+If your ImageMagick build lacks AVIF or HEIC support on Debian or Ubuntu,
+[IMEI — ImageMagick Easy Install](https://github.com/SoftCreatR/imei) builds
+ImageMagick for supported releases with the required AVIF and HEIC delegate
+libraries.
 
-### Usage
-- Drop an image (.png, .jpg, .jpeg, .webp) into an open note.
+### 4. Enable the plugin
+
+Open Obsidian settings, go to **Community plugins**, and enable
+**Obsidian AVIFicator**.
+
+## Usage
+
+- Drop or paste an image (`.png`, `.jpg`, `.jpeg`, `.webp`, or `.heic`) into an
+  open Markdown note.
 - The plugin will:
-  - Convert it to .avif using your configured quality.
-  - Rename it as {note-title}-{timestamp}.avif.
-  - Replace the original image link in the note with the new one.
-  - Notify you upon success (or failure).
+  - Convert it to `.avif` using the configured quality.
+  - Rename it as `{note-title}-{timestamp}.avif`.
+  - Replace the original image link with the new AVIF link.
+  - Delete the original only after the link is updated successfully.
+  - Preserve the original and notify you if conversion fails.
 
-### Settings
-Image Quality: Enter a number from 0 (lowest) to 100 (best). Default is 80.
+## Settings
 
-### Troubleshooting
-- Make sure magick is in your system PATH.
-- Make sure your ImageMagick (magick) is compiled with AVIF support.
-- Check developer console (Ctrl+Shift+I) in Obsidian for errors.
+**Image Quality:** enter a whole number from 0 (lowest) to 100 (highest).
+The default value is 80.
+
+## Troubleshooting
+
+- Make sure `magick` is available in your system `PATH`.
+- Make sure ImageMagick has AVIF write support.
+- For HEIC files, make sure ImageMagick has HEIC read support.
+- Make sure the image is inserted into the active Markdown note.
+- Check the Obsidian developer console (`Ctrl+Shift+I`) for detailed errors.
