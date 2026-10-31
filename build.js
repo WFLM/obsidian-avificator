@@ -4,5 +4,7 @@ require("esbuild").build({
   outfile: "main.js",
   platform: "node",
   target: ["es2020"],
-  external: ["obsidian"],
+  // Obsidian provides these at runtime; a bundled copy of CodeMirror wouldn't
+  // recognize Obsidian's editors.
+  external: ["obsidian", "@codemirror/state", "@codemirror/view"],
 }).catch(() => process.exit(1));

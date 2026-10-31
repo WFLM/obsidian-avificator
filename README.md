@@ -14,6 +14,8 @@ command).
 - Can shrink large images to a maximum size.
 - Keeps the original image if conversion or link replacement fails.
 - Never converts animated or multi-page images, so nothing is lost.
+- Copies images that Obsidian would only paste as a `file:///` address when
+  they are dragged from a file manager, as happens on Linux with Wayland.
 - Switches between converting, only renaming, and doing nothing right from
   the status bar.
 - Lets you configure AVIF image quality from 0 to 100.
@@ -130,6 +132,14 @@ mode.
 **Animated and multi-page images:** what to do with them in **Convert to
 AVIF** mode: **Ask every time** (default), **Rename only**, or **Leave as is**.
 
+**Copy images dropped as file links:** on by default. Sometimes, for example
+on Linux with Wayland, Obsidian gets only the `file:///` address of an image
+dragged from a file manager and pastes it as text instead of copying the
+image. With this option, the plugin copies such images into the vault itself,
+using Obsidian's attachment folder, so they are converted or renamed. Works in
+**Convert to AVIF** and **Rename only** modes. Holding `Ctrl` (`Option` on
+macOS) while dropping still inserts a link to the original file.
+
 **ImageMagick path:** the command name or full path of the `magick`
 executable. The default is `magick`, looked up in `PATH`. Set the full path if
 Obsidian can't find it, for example `/opt/homebrew/bin/magick` on macOS with
@@ -194,4 +204,6 @@ can't be converted, but **Rename only** mode still works for them.
 - Make sure ImageMagick has AVIF write support.
 - For HEIC files, make sure ImageMagick has HEIC read support.
 - Make sure the image is inserted into the active Markdown note.
+- If dragging an image from a file manager pastes a `file:///` address, make
+  sure **Copy images dropped as file links** is on and the mode isn't **Off**.
 - Check the Obsidian developer console (`Ctrl+Shift+I`) for detailed errors.

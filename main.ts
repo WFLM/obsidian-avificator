@@ -4,8 +4,12 @@ import {
   TFile,
   Notice,
   App,
+  Editor,
+  MarkdownFileInfo,
+  MarkdownView,
   Menu,
   Modal,
+  Platform,
   PluginSettingTab,
   Setting,
   FileSystemAdapter,
@@ -14,8 +18,12 @@ import {
   getLinkpath,
   moment,
 } from "obsidian";
+import { EditorView } from "@codemirror/view";
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { basename, extname } from "node:path";
 import { promisify } from "node:util";
+import { parseFileUriList, vaultRelativePath } from "./dropped-files";
 import {
   buildFileStem,
   filterTemplateSuggestions,
@@ -105,6 +113,15 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Obsidian's Editor can't map screen coordinates to text, so ask CodeMirror.
+function moveCursorToDrop(evt: DragEvent, editor: Editor): void {
+  const view = evt.target ? EditorView.findFromDOM(evt.target as HTMLElement) : null;
+  const offset = view?.posAtCoords({ x: evt.clientX, y: evt.clientY });
+  if (offset !== null && offset !== undefined) {
+    editor.setCursor(editor.offsetToPos(offset));
+  }
+}
+
 // Obsidian types moment as a namespace, which TypeScript 7 won't call, but at
 // runtime it is the moment function.
 const momentFromDate = moment as unknown as (date: Date) => {
@@ -156,6 +173,12 @@ export default class AVIFOnInsertPlugin extends Plugin {
     this.registerDomEvent(this.statusBarItem, "click", (evt) => this.showModeMenu(evt));
     this.updateStatusBar();
 
+    this.registerEvent(
+      this.app.workspace.on("editor-drop", (evt, editor, info) =>
+        this.handleEditorDrop(evt, editor, info)
+      )
+    );
+
     this.app.workspace.onLayoutReady(() => {
       this.registerEvent(
         this.app.vault.on("create", (file) => {
@@ -199,8 +222,8 @@ export default class AVIFOnInsertPlugin extends Plugin {
     const mode = this.settings.mode;
     if (mode === "off") return;
     if (!(file instanceof TFile)) return;
-    const format = formatForExtension(file.extension);
-    if (!format || !this.settings.formats[format]) return;
+    const format = this.enabledFormat(file.extension);
+    if (!format) return;
 
     const sourceNote = this.app.workspace.getActiveFile();
     if (!sourceNote || sourceNote.extension !== "md") return;
@@ -210,6 +233,83 @@ export default class AVIFOnInsertPlugin extends Plugin {
         ? this.renameLinkedImage(file, sourceNote)
         : this.convertLinkedImage(file, sourceNote, format)
     );
+  }
+
+  private enabledFormat(extension: string): ImageFormat | null {
+    const format = formatForExtension(extension);
+    return format && this.settings.formats[format] ? format : null;
+  }
+
+  // When a drop carries file:/// addresses but no plain text, as drags from a
+  // file manager do on Linux with Wayland, Obsidian pastes the addresses as
+  // text instead of copying the files, even if the files come with them.
+  // Such images are copied into the vault here instead.
+  private handleEditorDrop(
+    evt: DragEvent,
+    editor: Editor,
+    info: MarkdownView | MarkdownFileInfo
+  ): void {
+    const dataTransfer = evt.dataTransfer;
+    const note = info.file;
+    if (
+      evt.defaultPrevented ||
+      !dataTransfer ||
+      !note ||
+      !this.settings.importDroppedFileLinks ||
+      this.settings.mode === "off" ||
+      // With this key held, Obsidian links to files instead of copying them.
+      (Platform.isMacOS ? evt.altKey : evt.ctrlKey)
+    ) {
+      return;
+    }
+
+    const filePaths = parseFileUriList(dataTransfer.getData("text/uri-list"));
+    if (!filePaths?.every((filePath) => this.enabledFormat(extname(filePath).slice(1)))) {
+      return;
+    }
+
+    evt.preventDefault();
+    moveCursorToDrop(evt, editor);
+    void this.importDroppedImages(filePaths, editor, note);
+  }
+
+  private async importDroppedImages(
+    filePaths: string[],
+    editor: Editor,
+    note: TFile
+  ): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) return;
+
+    for (const [index, filePath] of filePaths.entries()) {
+      try {
+        const file = await this.importDroppedImage(adapter, filePath, note);
+        const link = this.app.fileManager.generateMarkdownLink(file, note.path);
+        const separator = index < filePaths.length - 1 ? "\n" : "";
+        editor.replaceSelection(`!${link}${separator}`);
+      } catch (error: unknown) {
+        console.error("Could not copy the dropped image", { error, filePath });
+        new Notice(`Could not copy ${basename(filePath)} into the vault`);
+      }
+    }
+  }
+
+  // An image that is already in the vault is only linked, as Obsidian does.
+  private async importDroppedImage(
+    adapter: FileSystemAdapter,
+    filePath: string,
+    note: TFile
+  ): Promise<TFile> {
+    const vaultPath = vaultRelativePath(adapter.getBasePath(), filePath);
+    const existing = vaultPath === null ? null : this.app.vault.getAbstractFileByPath(vaultPath);
+    if (existing instanceof TFile) return existing;
+
+    const data = await readFile(filePath);
+    const attachmentPath = await this.app.fileManager.getAvailablePathForAttachment(
+      basename(filePath),
+      note.path
+    );
+    return this.app.vault.createBinary(attachmentPath, new Uint8Array(data).buffer);
   }
 
   private async convertLinkedImage(
@@ -830,6 +930,20 @@ class AVIFSettingTab extends PluginSettingTab {
               this.plugin.settings.animatedImageAction = value;
               await this.plugin.saveSettings();
             }
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Copy images dropped as file links")
+      .setDesc(
+        "Sometimes, for example on Linux with Wayland, Obsidian inserts a file:/// address instead of copying an image dragged from a file manager. Copy such images into the vault instead, so they are converted or renamed. Works in Convert to AVIF and Rename only modes."
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.importDroppedFileLinks)
+          .onChange(async (value) => {
+            this.plugin.settings.importDroppedFileLinks = value;
+            await this.plugin.saveSettings();
           })
       );
 

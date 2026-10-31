@@ -24,6 +24,7 @@ const DEFAULTS = {
   formats: ALL_FORMATS,
   fileNameTemplate: "{title}-{date:YYYYMMDDHHmmssSSS}{counter}",
   replaceSpaces: true,
+  importDroppedFileLinks: true,
 };
 
 test("uses defaults when nothing is stored", () => {
@@ -43,6 +44,7 @@ test("keeps valid stored settings and trims the ImageMagick path", () => {
       formats: { ...ALL_FORMATS, GIF: false, TIFF: false },
       fileNameTemplate: " {date:YYYY-MM-DD} {title} ",
       replaceSpaces: false,
+      importDroppedFileLinks: false,
     }),
     {
       mode: "rename",
@@ -55,6 +57,7 @@ test("keeps valid stored settings and trims the ImageMagick path", () => {
       formats: { ...ALL_FORMATS, GIF: false, TIFF: false },
       fileNameTemplate: "{date:YYYY-MM-DD} {title}",
       replaceSpaces: false,
+      importDroppedFileLinks: false,
     }
   );
   assert.equal(parseSettings({ mode: "off" }).mode, "off");
@@ -73,6 +76,7 @@ test("falls back to defaults for invalid stored values", () => {
       formats: "all",
       fileNameTemplate: "   ",
       replaceSpaces: "no",
+      importDroppedFileLinks: "no",
     }),
     DEFAULTS
   );
@@ -88,6 +92,7 @@ test("falls back to defaults for invalid stored values", () => {
       formats: { PNG: "no", SVG: true },
       fileNameTemplate: "{title}-{foo}",
       replaceSpaces: 0,
+      importDroppedFileLinks: 0,
     }),
     DEFAULTS
   );

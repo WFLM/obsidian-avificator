@@ -18,6 +18,7 @@ export interface AVIFPluginSettings {
   formats: Record<ImageFormat, boolean>;
   fileNameTemplate: string;
   replaceSpaces: boolean;
+  importDroppedFileLinks: boolean;
 }
 
 export const DEFAULT_SETTINGS: AVIFPluginSettings = {
@@ -31,6 +32,7 @@ export const DEFAULT_SETTINGS: AVIFPluginSettings = {
   formats: allFormatsEnabled(),
   fileNameTemplate: DEFAULT_FILE_NAME_TEMPLATE,
   replaceSpaces: true,
+  importDroppedFileLinks: true,
 };
 
 function allFormatsEnabled(): Record<ImageFormat, boolean> {
@@ -112,6 +114,10 @@ export function parseSettings(storedData: unknown): AVIFPluginSettings {
       typeof stored.replaceSpaces === "boolean"
         ? stored.replaceSpaces
         : DEFAULT_SETTINGS.replaceSpaces,
+    importDroppedFileLinks:
+      typeof stored.importDroppedFileLinks === "boolean"
+        ? stored.importDroppedFileLinks
+        : DEFAULT_SETTINGS.importDroppedFileLinks,
   };
 }
 
