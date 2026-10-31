@@ -1,6 +1,16 @@
 // Format names match ImageMagick's, so they can be looked up in its format
 // list as is.
-export const IMAGE_FORMATS = ["PNG", "JPEG", "WEBP", "HEIC", "GIF", "BMP", "TIFF", "JXL"] as const;
+export const IMAGE_FORMATS = [
+  "PNG",
+  "JPEG",
+  "WEBP",
+  "HEIC",
+  "GIF",
+  "BMP",
+  "TIFF",
+  "JXL",
+  "AVIF",
+] as const;
 export type ImageFormat = (typeof IMAGE_FORMATS)[number];
 
 export const FORMAT_EXTENSIONS: Record<ImageFormat, readonly string[]> = {
@@ -12,7 +22,26 @@ export const FORMAT_EXTENSIONS: Record<ImageFormat, readonly string[]> = {
   BMP: ["bmp"],
   TIFF: ["tif", "tiff"],
   JXL: ["jxl"],
+  AVIF: ["avif"],
 };
+
+// Converting AVIF to AVIF would only lose quality, so AVIF images are only
+// renamed.
+export function canConvert(format: ImageFormat): boolean {
+  return format !== "AVIF";
+}
+
+export type MultiFrameKind = "animated" | "pages";
+
+// Judges by ImageMagick's frame count, whatever the extension says: a .png
+// file may really be an animated GIF or WebP.
+export function multiFrameKind(
+  format: ImageFormat,
+  frameCount: number
+): MultiFrameKind | null {
+  if (frameCount <= 1) return null;
+  return format === "TIFF" ? "pages" : "animated";
+}
 
 export function formatForExtension(extension: string): ImageFormat | null {
   const lowerCased = extension.toLowerCase();

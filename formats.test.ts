@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { formatForExtension, isAnimatedPng } from "./formats";
+import { canConvert, formatForExtension, isAnimatedPng, multiFrameKind } from "./formats";
 
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10];
 
@@ -33,7 +33,24 @@ test("maps file extensions to image formats", () => {
   assert.equal(formatForExtension("tif"), "TIFF");
   assert.equal(formatForExtension("jxl"), "JXL");
   assert.equal(formatForExtension("svg"), null);
-  assert.equal(formatForExtension("avif"), null);
+  assert.equal(formatForExtension("AVIF"), "AVIF");
+});
+
+test("tells animated and multi-page images by their frame count", () => {
+  assert.equal(multiFrameKind("GIF", 3), "animated");
+  assert.equal(multiFrameKind("TIFF", 2), "pages");
+  assert.equal(multiFrameKind("JPEG", 1), null);
+});
+
+test("trusts the frame count over the extension", () => {
+  // An animated WebP or GIF saved with a .png extension.
+  assert.equal(multiFrameKind("PNG", 3), "animated");
+});
+
+test("doesn't convert AVIF to AVIF", () => {
+  assert.equal(canConvert("AVIF"), false);
+  assert.equal(canConvert("PNG"), true);
+  assert.equal(canConvert("HEIC"), true);
 });
 
 test("detects an animated PNG by its acTL chunk", () => {

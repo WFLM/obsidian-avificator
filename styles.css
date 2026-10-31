@@ -56,6 +56,11 @@
   font-size: var(--font-ui-smaller);
 }
 
+/* In place of a checkbox for an action a format doesn't have. */
+.avificator-formats-none {
+  color: var(--text-faint);
+}
+
 /* Columns that the current mode ignores. */
 .avificator-formats.mod-no-rename .avificator-formats-rename,
 .avificator-formats.mod-no-convert .avificator-formats-convert {

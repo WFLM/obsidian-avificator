@@ -64,6 +64,13 @@ export function parseFrameCount(output: string): number | null {
   return Number.isNaN(count) ? null : count;
 }
 
+// ImageMagick ran and exited with an error, which for identify means it
+// couldn't read the image. A missing or unrunnable program has a string code
+// such as ENOENT, and a timed out one has none.
+export function isMagickReadError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && typeof error.code === "number";
+}
+
 export function describeMagickError(error: unknown): MagickStatus {
   if (error instanceof Error && "code" in error && error.code === "ENOENT") {
     return [{ text: "ImageMagick not found at this path.", ok: false }];

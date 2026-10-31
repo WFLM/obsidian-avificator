@@ -17,6 +17,7 @@ import {
   debounce,
   getLinkpath,
   moment,
+  setTooltip,
 } from "obsidian";
 import { EditorView } from "@codemirror/view";
 import { execFile } from "node:child_process";
@@ -39,14 +40,18 @@ import { replaceImageEmbedLinks, type LinkReplacementResult } from "./link-utils
 import {
   FORMAT_EXTENSIONS,
   IMAGE_FORMATS,
+  canConvert,
   formatForExtension,
   isAnimatedPng,
+  multiFrameKind,
   type ImageFormat,
+  type MultiFrameKind,
 } from "./formats";
 import { buildConvertArgs } from "./magick-args";
 import {
   describeMagickError,
   describeMagickSupport,
+  isMagickReadError,
   parseFormatList,
   parseFrameCount,
   type FormatSupport,
@@ -76,6 +81,13 @@ const MAGICK_CHECK_DELAY_MS = 500;
 const MOMENT_FORMAT_URL = "https://momentjs.com/docs/#/displaying/format/";
 const LINK_RETRY_COUNT = 10;
 const LINK_RETRY_DELAY_MS = 250;
+// How long after a conversion ends its output is still not taken for a new
+// image, in case the vault reports it late.
+const OWN_OUTPUT_GRACE_MS = 30_000;
+
+// Only these formats are checked against ImageMagick: AVIF images are only
+// renamed and never read by it.
+const CONVERTIBLE_FORMATS = IMAGE_FORMATS.filter(canConvert);
 
 const MODE_LABELS: Record<Mode, string> = {
   convert: "Convert to AVIF",
@@ -89,7 +101,6 @@ const ANIMATED_IMAGE_ACTION_LABELS: Record<AnimatedImageAction, string> = {
   skip: "Leave as is",
 };
 
-type MultiFrameKind = "animated" | "pages";
 // Why an image of a format with Convert on can't be converted.
 type ConversionObstacle = MultiFrameKind | "unreadable";
 
@@ -158,6 +169,9 @@ export default class AVIFOnInsertPlugin extends Plugin {
   settings: AVIFPluginSettings = { ...DEFAULT_SETTINGS };
   private readonly noteQueues = new Map<string, Promise<void>>();
   private readonly reservedOutputPaths = new Set<string>();
+  // AVIF files this plugin is writing. AVIF is an input format too, so
+  // without this the plugin would rename its own output.
+  private readonly ownOutputPaths = new Set<string>();
   private statusBarItem: HTMLElement | null = null;
 
   // Serializes read-modify-write operations per note so concurrent image
@@ -249,6 +263,7 @@ export default class AVIFOnInsertPlugin extends Plugin {
 
   private async handleCreatedFile(file: TAbstractFile): Promise<void> {
     if (!(file instanceof TFile)) return;
+    if (this.ownOutputPaths.delete(file.path)) return;
     // The mode is read when the image arrives, so switching modes doesn't
     // affect images that are already queued.
     const plan = this.planImage(file.extension);
@@ -373,6 +388,7 @@ export default class AVIFOnInsertPlugin extends Plugin {
       }
 
       outputTarget = await this.reserveOutputTarget(file, sourceNote, "avif", rename);
+      this.ownOutputPaths.add(outputTarget.vaultPath);
 
       await execFileAsync(
         this.settings.magickPath,
@@ -421,7 +437,12 @@ export default class AVIFOnInsertPlugin extends Plugin {
       );
     } finally {
       if (outputTarget) {
-        this.reservedOutputPaths.delete(outputTarget.vaultPath);
+        const { vaultPath } = outputTarget;
+        this.reservedOutputPaths.delete(vaultPath);
+        // The vault reports the output once ImageMagick creates it, which may
+        // be after the conversion ends. If it never does, for example because
+        // the conversion failed, the path is forgotten.
+        window.setTimeout(() => this.ownOutputPaths.delete(vaultPath), OWN_OUTPUT_GRACE_MS);
       }
     }
   }
@@ -442,17 +463,22 @@ export default class AVIFOnInsertPlugin extends Plugin {
       );
       frameCount = parseFrameCount(stdout) ?? 1;
     } catch (error: unknown) {
+      // If ImageMagick is missing or doesn't run, the conversion fails as a
+      // whole and the original is kept.
+      if (!isMagickReadError(error)) throw error;
       console.warn("ImageMagick could not open the image", { error, imagePath: file.path });
       return "unreadable";
     }
 
+    const kind = multiFrameKind(format, frameCount);
+    if (kind) return kind;
+
     // ImageMagick counts only the first frame of an animated PNG.
     if (format === "PNG") {
       const bytes = new Uint8Array(await this.app.vault.readBinary(file));
-      return isAnimatedPng(bytes) ? "animated" : null;
+      if (isAnimatedPng(bytes)) return "animated";
     }
-    if (frameCount <= 1) return null;
-    return format === "TIFF" ? "pages" : "animated";
+    return null;
   }
 
   // Does what is left when an image can't be converted: renaming, if it is on
@@ -1105,12 +1131,16 @@ class AVIFSettingTab extends PluginSettingTab {
       formatNameEls.set(format, nameEl);
 
       for (const [action, label] of actionLabels) {
-        const checkbox = rowEl
-          .createDiv({ cls: `avificator-formats-${action}` })
-          .createEl("input", {
-            type: "checkbox",
-            attr: { "aria-label": `${label} ${format}` },
-          });
+        const cellEl = rowEl.createDiv({ cls: `avificator-formats-${action}` });
+        if (action === "convert" && !canConvert(format)) {
+          const noneEl = cellEl.createSpan({ cls: "avificator-formats-none", text: "—" });
+          setTooltip(noneEl, `${format} images are only renamed`);
+          continue;
+        }
+        const checkbox = cellEl.createEl("input", {
+          type: "checkbox",
+          attr: { "aria-label": `${label} ${format}` },
+        });
         checkbox.checked = this.plugin.settings.formats[format][action];
         checkbox.addEventListener("change", () => {
           this.plugin.settings.formats[format][action] = checkbox.checked;
@@ -1132,11 +1162,11 @@ class AVIFSettingTab extends PluginSettingTab {
     const checkId = ++this.magickCheckId;
     statusEl.setText("Checking ImageMagick...");
 
-    // All formats the plugin knows are checked, whether they are on or not, so
-    // the status shows what ImageMagick can do rather than what is selected.
+    // Formats are checked whether they are on or not, so the status shows what
+    // ImageMagick can do rather than what is selected.
     const { status, formats } = await checkMagick(
       this.plugin.settings.magickPath,
-      IMAGE_FORMATS
+      CONVERTIBLE_FORMATS
     );
     if (checkId !== this.magickCheckId) return;
 
@@ -1149,7 +1179,7 @@ class AVIFSettingTab extends PluginSettingTab {
     }
 
     // Without a format list (ImageMagick not found), the status says it all.
-    const unreadable = IMAGE_FORMATS.filter(
+    const unreadable = CONVERTIBLE_FORMATS.filter(
       (format) => formats.size > 0 && !formats.get(format)?.read
     );
     for (const [format, nameEl] of formatNameEls) {

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   describeMagickError,
   describeMagickSupport,
+  isMagickReadError,
   parseFormatList,
   parseFrameCount,
 } from "./magick-support";
@@ -113,4 +114,27 @@ test("reads the frame count from identify output", () => {
   assert.equal(parseFrameCount("1\n"), 1);
   assert.equal(parseFrameCount(""), null);
   assert.equal(parseFrameCount("identify: no decode delegate\n"), null);
+});
+
+test("takes an error ImageMagick itself reports for a read error", () => {
+  const exited = Object.assign(new Error("Command failed: magick identify"), {
+    code: 1,
+    killed: false,
+    signal: null,
+  });
+  assert.equal(isMagickReadError(exited), true);
+});
+
+test("doesn't take a missing, unrunnable, or timed out ImageMagick for a read error", () => {
+  const missing = Object.assign(new Error("spawn magick ENOENT"), { code: "ENOENT" });
+  const denied = Object.assign(new Error("spawn magick EACCES"), { code: "EACCES" });
+  const timedOut = Object.assign(new Error("Command failed"), {
+    code: null,
+    killed: true,
+    signal: "SIGTERM",
+  });
+  assert.equal(isMagickReadError(missing), false);
+  assert.equal(isMagickReadError(denied), false);
+  assert.equal(isMagickReadError(timedOut), false);
+  assert.equal(isMagickReadError("not an error"), false);
 });

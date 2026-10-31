@@ -1,5 +1,5 @@
 import { DEFAULT_FILE_NAME_TEMPLATE, findUnknownVariable } from "./file-name";
-import { IMAGE_FORMATS, type ImageFormat } from "./formats";
+import { IMAGE_FORMATS, canConvert, type ImageFormat } from "./formats";
 
 export const MODES = ["convert", "rename", "off"] as const;
 export type Mode = (typeof MODES)[number];
@@ -45,7 +45,7 @@ export const DEFAULT_SETTINGS: AVIFPluginSettings = {
 
 function allFormatActions(): Record<ImageFormat, FormatActions> {
   return Object.fromEntries(
-    IMAGE_FORMATS.map((format) => [format, { rename: true, convert: true }])
+    IMAGE_FORMATS.map((format) => [format, { rename: true, convert: canConvert(format) }])
   ) as Record<ImageFormat, FormatActions>;
 }
 
@@ -158,6 +158,7 @@ function parseFormats(storedFormats: unknown): Record<ImageFormat, FormatActions
       if (typeof actions.rename === "boolean") formats[format].rename = actions.rename;
       if (typeof actions.convert === "boolean") formats[format].convert = actions.convert;
     }
+    if (!canConvert(format)) formats[format].convert = false;
   }
   return formats;
 }

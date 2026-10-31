@@ -2,7 +2,7 @@
 
 Automatically converts newly added PNG, JPEG, WEBP, HEIC, GIF, BMP, TIFF, and
 JPEG XL images in your notes to AVIF format using ImageMagick (`magick`
-command).
+command), and renames them, as well as AVIF images, using a template.
 
 ## Features
 
@@ -214,6 +214,10 @@ Each format has two checkboxes, both checked by default:
   example `Pasted image 1.png` becomes `Pasted image 1.avif`.
 - Neither: the plugin leaves images of this format alone.
 
+AVIF images can only be renamed: converting AVIF to AVIF would only lose
+quality, so AVIF has no **Convert** checkbox. AVIF files the plugin creates
+itself are never renamed again.
+
 In **Rename only** mode, the **Convert** column is ignored and dimmed; in
 **Off** mode, both are. If ImageMagick can't read a format, its name is shown
 in orange: such images can only be renamed.
@@ -228,6 +232,7 @@ in orange: such images can only be renamed.
 | BMP | `.bmp` |
 | TIFF | `.tif`, `.tiff` |
 | JXL (JPEG XL) | `.jxl` |
+| AVIF (rename only) | `.avif` |
 
 ## Troubleshooting
 

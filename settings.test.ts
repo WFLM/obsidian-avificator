@@ -16,6 +16,7 @@ const ALL_FORMATS = {
   BMP: BOTH,
   TIFF: BOTH,
   JXL: BOTH,
+  AVIF: RENAME_ONLY,
 };
 
 const DEFAULTS = {
@@ -125,6 +126,12 @@ test("turns formats switched on or off in older settings into both actions or no
     ...ALL_FORMATS,
     PNG: NONE,
   });
+});
+
+test("never converts AVIF, whatever is stored", () => {
+  assert.deepEqual(parseSettings({ formats: { AVIF: BOTH } }).formats.AVIF, RENAME_ONLY);
+  assert.deepEqual(parseSettings({ formats: { AVIF: true } }).formats.AVIF, RENAME_ONLY);
+  assert.deepEqual(parseSettings({ formats: { AVIF: false } }).formats.AVIF, NONE);
 });
 
 test("follows the format actions in Convert mode", () => {
