@@ -18,13 +18,15 @@ import {
   getLinkpath,
   moment,
   setTooltip,
+  type Debouncer,
 } from "obsidian";
 import { EditorView } from "@codemirror/view";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { promisify } from "node:util";
-import { parseFileUriList, vaultRelativePath } from "./dropped-files";
+import { noteClosedMessage, parseFileUriList, vaultRelativePath } from "./dropped-files";
+import { InsertWindow } from "./insert-window";
 import {
   buildFileStem,
   filterTemplateSuggestions,
@@ -36,7 +38,12 @@ import {
   type FileNameValues,
   type TemplateSuggestion,
 } from "./file-name";
-import { replaceImageEmbedLinks, type LinkReplacementResult } from "./link-utils";
+import {
+  isFileNameTaken,
+  linkPathPointsTo,
+  replaceImageEmbedLinks,
+  type LinkReplacementResult,
+} from "./link-utils";
 import {
   FORMAT_EXTENSIONS,
   IMAGE_FORMATS,
@@ -47,7 +54,7 @@ import {
   type ImageFormat,
   type MultiFrameKind,
 } from "./formats";
-import { buildConvertArgs } from "./magick-args";
+import { buildConvertArgs, buildFrameCountArgs } from "./magick-args";
 import {
   describeMagickError,
   describeMagickSupport,
@@ -81,6 +88,11 @@ const MAGICK_CHECK_DELAY_MS = 500;
 const MOMENT_FORMAT_URL = "https://momentjs.com/docs/#/displaying/format/";
 const LINK_RETRY_COUNT = 10;
 const LINK_RETRY_DELAY_MS = 250;
+// How long after a paste or drop new images are taken for the pasted or
+// dropped ones. Each such image starts the wait over, so that saving many
+// dropped images can take longer, but only up to the maximum.
+const INSERT_WINDOW_MS = 10_000;
+const INSERT_WINDOW_MAX_MS = 60_000;
 // How long after a conversion ends its output is still not taken for a new
 // image, in case the vault reports it late.
 const OWN_OUTPUT_GRACE_MS = 30_000;
@@ -135,8 +147,11 @@ function wait(ms: number): Promise<void> {
 }
 
 // Obsidian's Editor can't map screen coordinates to text, so ask CodeMirror.
+// It finds its view only from its own elements, not from inside a widget such
+// as an embedded image or a table, so the search starts at the editor.
 function moveCursorToDrop(evt: DragEvent, editor: Editor): void {
-  const view = evt.target ? EditorView.findFromDOM(evt.target as HTMLElement) : null;
+  const editorEl = (evt.target as HTMLElement | null)?.closest<HTMLElement>(".cm-editor");
+  const view = editorEl ? EditorView.findFromDOM(editorEl) : null;
   const offset = view?.posAtCoords({ x: evt.clientX, y: evt.clientY });
   if (offset !== null && offset !== undefined) {
     editor.setCursor(editor.offsetToPos(offset));
@@ -172,6 +187,7 @@ export default class AVIFOnInsertPlugin extends Plugin {
   // AVIF files this plugin is writing. AVIF is an input format too, so
   // without this the plugin would rename its own output.
   private readonly ownOutputPaths = new Set<string>();
+  private readonly insertWindow = new InsertWindow(INSERT_WINDOW_MS, INSERT_WINDOW_MAX_MS);
   private statusBarItem: HTMLElement | null = null;
 
   // Serializes read-modify-write operations per note so concurrent image
@@ -217,6 +233,11 @@ export default class AVIFOnInsertPlugin extends Plugin {
       });
     }
 
+    this.registerEvent(
+      this.app.workspace.on("editor-paste", (_evt, _editor, info) => {
+        if (info.file) this.insertWindow.open(info.file.path, Date.now());
+      })
+    );
     this.registerEvent(
       this.app.workspace.on("editor-drop", (evt, editor, info) =>
         this.handleEditorDrop(evt, editor, info)
@@ -269,8 +290,13 @@ export default class AVIFOnInsertPlugin extends Plugin {
     const plan = this.planImage(file.extension);
     if (!plan) return;
 
-    const sourceNote = this.app.workspace.getActiveFile();
+    // Only images just pasted or dropped into a note are processed, not ones
+    // that sync brings in while the note is open. The note is the one they
+    // went into, which may not be the active one.
+    const notePath = this.insertWindow.notePathAt(Date.now());
+    const sourceNote = notePath ? this.app.vault.getFileByPath(notePath) : null;
     if (!sourceNote || sourceNote.extension !== "md") return;
+    this.insertWindow.extend(Date.now());
 
     const { format, actions } = plan;
     await this.queueNoteOperation(sourceNote.path, () =>
@@ -290,10 +316,12 @@ export default class AVIFOnInsertPlugin extends Plugin {
     return actions.rename || actions.convert ? { format, actions } : null;
   }
 
-  // When a drop carries file:/// addresses but no plain text, as drags from a
-  // file manager do on Linux with Wayland, Obsidian pastes the addresses as
-  // text instead of copying the files, even if the files come with them.
-  // Such images are copied into the vault here instead.
+  // When a drop carries file:/// addresses, as drags from a file manager do on
+  // Linux with Wayland, Obsidian inserts them as text, or as a Markdown link
+  // if the drop has other plain text, instead of copying the files, even if
+  // the files come with them. Such images are copied into the vault here
+  // instead. Obsidian copies them itself only if the plain text is the address,
+  // and the result of copying them here is the same.
   private handleEditorDrop(
     evt: DragEvent,
     editor: Editor,
@@ -301,6 +329,7 @@ export default class AVIFOnInsertPlugin extends Plugin {
   ): void {
     const dataTransfer = evt.dataTransfer;
     const note = info.file;
+    if (note) this.insertWindow.open(note.path, Date.now());
     if (
       evt.defaultPrevented ||
       !dataTransfer ||
@@ -320,12 +349,13 @@ export default class AVIFOnInsertPlugin extends Plugin {
 
     evt.preventDefault();
     moveCursorToDrop(evt, editor);
-    void this.importDroppedImages(filePaths, editor, note);
+    void this.importDroppedImages(filePaths, editor, info, note);
   }
 
   private async importDroppedImages(
     filePaths: string[],
     editor: Editor,
+    info: MarkdownView | MarkdownFileInfo,
     note: TFile
   ): Promise<void> {
     const adapter = this.app.vault.adapter;
@@ -334,6 +364,12 @@ export default class AVIFOnInsertPlugin extends Plugin {
     for (const [index, filePath] of filePaths.entries()) {
       try {
         const file = await this.importDroppedImage(adapter, filePath, note);
+        // Copying takes a moment, and the editor may show another note by now.
+        if (info.file !== note) {
+          const skippedCount = filePaths.length - index - 1;
+          new Notice(noteClosedMessage(note.basename, file.name, skippedCount));
+          return;
+        }
         const link = this.app.fileManager.generateMarkdownLink(file, note.path);
         const separator = index < filePaths.length - 1 ? "\n" : "";
         editor.replaceSelection(`!${link}${separator}`);
@@ -359,6 +395,8 @@ export default class AVIFOnInsertPlugin extends Plugin {
       basename(filePath),
       note.path
     );
+    // Reading a large or remote file may outlast the wait started by the drop.
+    this.insertWindow.open(note.path, Date.now());
     return this.app.vault.createBinary(attachmentPath, new Uint8Array(data).buffer);
   }
 
@@ -458,7 +496,7 @@ export default class AVIFOnInsertPlugin extends Plugin {
     try {
       const { stdout } = await execFileAsync(
         this.settings.magickPath,
-        ["identify", "-ping", "-format", "%n\n", adapter.getFullPath(file.path)],
+        buildFrameCountArgs(adapter.getFullPath(file.path)),
         { timeout: MAGICK_CHECK_TIMEOUT_MS, windowsHide: true }
       );
       frameCount = parseFrameCount(stdout) ?? 1;
@@ -531,6 +569,8 @@ export default class AVIFOnInsertPlugin extends Plugin {
         sourceNote,
         file.extension.toLowerCase()
       );
+      // The template gives the name the image already has.
+      if (outputTarget.vaultPath === originalPath) return;
       await this.app.vault.rename(file, outputTarget.vaultPath);
       renamed = true;
 
@@ -545,16 +585,18 @@ export default class AVIFOnInsertPlugin extends Plugin {
 
       new Notice(`Renamed: ${outputTarget.fileName}`);
     } catch (error: unknown) {
-      if (renamed) {
-        await this.restoreOriginalNameSafely(file, originalPath);
-      }
+      const nameKept = !renamed || (await this.restoreOriginalNameSafely(file, originalPath));
 
       console.error("Image rename failed", {
         error,
         imagePath: originalPath,
         notePath: sourceNote.path,
       });
-      new Notice("Image rename failed; the original name was kept");
+      new Notice(
+        nameKept
+          ? "Image rename failed; the original name was kept"
+          : `Image rename failed, and ${file.name} couldn't get its original name back. Check its link in the note.`
+      );
     } finally {
       if (outputTarget) {
         this.reservedOutputPaths.delete(outputTarget.vaultPath);
@@ -562,15 +604,17 @@ export default class AVIFOnInsertPlugin extends Plugin {
     }
   }
 
-  private async restoreOriginalNameSafely(file: TFile, originalPath: string): Promise<void> {
+  private async restoreOriginalNameSafely(file: TFile, originalPath: string): Promise<boolean> {
     try {
       await this.app.vault.rename(file, originalPath);
+      return true;
     } catch (restoreError: unknown) {
       console.error("Failed to restore the original image name", {
         restoreError,
         imagePath: file.path,
         originalPath,
       });
+      return false;
     }
   }
 
@@ -583,6 +627,7 @@ export default class AVIFOnInsertPlugin extends Plugin {
   ): Promise<OutputTarget> {
     const folderPath = file.path.substring(0, file.path.lastIndexOf("/") + 1);
     const values = fileNameValues(sourceNote.basename, file.basename, new Date());
+    const vaultPaths = this.app.vault.getFiles().map((candidate) => candidate.path);
 
     for (let attempt = 0; ; attempt += 1) {
       const stem = rename
@@ -593,11 +638,16 @@ export default class AVIFOnInsertPlugin extends Plugin {
         : keepFileStem(file.basename, attempt);
       const fileName = `${stem}.${extension}`;
       const vaultPath = folderPath + fileName;
+      // An image may keep its own name, or change only its case, which file
+      // systems that ignore case report as taken.
+      const isOwnPath = vaultPath.toLowerCase() === file.path.toLowerCase();
+      const isFree =
+        isOwnPath ||
+        (!isFileNameTaken(fileName, vaultPaths) &&
+          !(await this.app.vault.adapter.exists(vaultPath)));
 
-      if (
-        !this.reservedOutputPaths.has(vaultPath) &&
-        !(await this.app.vault.adapter.exists(vaultPath))
-      ) {
+      // Other images may be getting names at the same time, in any folder.
+      if (isFree && !isFileNameTaken(fileName, [...this.reservedOutputPaths])) {
         this.reservedOutputPaths.add(vaultPath);
         return { fileName, vaultPath };
       }
@@ -679,19 +729,12 @@ export default class AVIFOnInsertPlugin extends Plugin {
     if (destination) {
       return destination.path === filePath;
     }
-    if (linkPath === filePath) {
-      return true;
-    }
-
-    const fileName = filePath.slice(filePath.lastIndexOf("/") + 1);
-    if (linkPath !== fileName) {
-      return false;
-    }
-
-    // A bare file name only points here if no other file shares that name.
-    return !this.app.vault
-      .getFiles()
-      .some((candidate) => candidate.name === fileName && candidate.path !== filePath);
+    return linkPathPointsTo(
+      linkPath,
+      note.path,
+      filePath,
+      this.app.vault.getFiles().map((candidate) => candidate.path)
+    );
   }
 
   private decodeLinkTarget(target: string): string {
@@ -843,6 +886,8 @@ class TemplateVariableSuggest extends AbstractInputSuggest<TemplateSuggestion> {
 class AVIFSettingTab extends PluginSettingTab {
   plugin: AVIFOnInsertPlugin;
   private magickCheckId = 0;
+  // Checks ImageMagick shortly after the path is edited.
+  private checkMagickLater: Debouncer<[], void> | null = null;
 
   constructor(app: App, plugin: AVIFOnInsertPlugin) {
     super(app, plugin);
@@ -852,6 +897,9 @@ class AVIFSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
 
+    // A check left over from before a redraw would make the new one's result
+    // look outdated, leaving the status at "Checking ImageMagick...".
+    this.checkMagickLater?.cancel();
     containerEl.empty();
 
     new Setting(containerEl)
@@ -1084,6 +1132,7 @@ class AVIFSettingTab extends PluginSettingTab {
       MAGICK_CHECK_DELAY_MS,
       true
     );
+    this.checkMagickLater = checkMagickLater;
     magickPathSetting.addText((text) =>
       text
         .setPlaceholder(DEFAULT_SETTINGS.magickPath)

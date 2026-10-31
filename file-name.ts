@@ -17,10 +17,27 @@ const DEFAULT_DATE_FORMAT = "YYYY-MM-DD";
 // Not allowed in file names on some systems, or breaks Obsidian links.
 const FORBIDDEN_CHARACTERS = /[\\/:*?"<>|#^[\]]/g;
 
+// File systems allow names of up to 255 bytes, so long titles and names are
+// cut to leave room for the rest of the template.
+const MAX_VALUE_BYTES = 100;
+
+function cutToBytes(value: string, maxBytes: number): string {
+  const encoder = new TextEncoder();
+  let result = "";
+  let byteCount = 0;
+  for (const character of value) {
+    byteCount += encoder.encode(character).length;
+    if (byteCount > maxBytes) break;
+    result += character;
+  }
+  return result;
+}
+
 export function sanitizeFileStem(value: string, replaceSpaces: boolean): string {
   const separator = replaceSpaces ? "_" : " ";
-  const sanitized = value
-    .replace(/[^\p{L}\p{N}._-]+/gu, separator)
+  // Sanitizing never makes the value longer.
+  const sanitized = cutToBytes(value, MAX_VALUE_BYTES)
+    .replace(/[^\p{L}\p{M}\p{N}._-]+/gu, separator)
     .replace(replaceSpaces ? /_+/g : / +/g, separator)
     .replace(/^[._ -]+|[._ -]+$/g, "");
   return sanitized || "Untitled";

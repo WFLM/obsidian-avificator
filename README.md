@@ -84,6 +84,9 @@ The build creates `main.js` in the plugin folder.
   - Move the original to trash only after the link is updated successfully,
     following Obsidian's **Deleted files** setting.
   - Preserve the original and notify you if conversion fails.
+- Only images you paste or drop into a note are processed. Images that reach
+  the vault in other ways, for example through sync while the note is open on
+  another device or from other plugins, are left alone.
 
 ### Modes
 
@@ -153,7 +156,7 @@ name below the field shows the result as you type. Variables:
 | `{title}` | the note title |
 | `{original}` | the original file name, without the extension |
 | `{date:FORMAT}` | the date and time in [Moment.js format](https://momentjs.com/docs/#/displaying/format/), the same as in daily notes. `{date}` is `{date:YYYY-MM-DD}` |
-| `{counter}` | `000`, or `001`, `002`, and so on if the name is already taken |
+| `{counter}` | `000`, or `001`, `002`, and so on if the vault already has a file with that name |
 
 The default template is `{title}-{date:YYYYMMDDHHmmssSSS}{counter}`. Examples
 for the note "Team meeting" and the image `IMG_1234.jpg`:
@@ -167,7 +170,9 @@ for the note "Team meeting" and the image `IMG_1234.jpg`:
 If the template has no `{counter}` and the name is taken, ` 1`, ` 2`, and so on
 is added to the end. Characters that can't be used in file names or links,
 such as `:` or `#`, are replaced with `-`; in the note title and the original
-name, they are replaced like spaces.
+name, they are replaced like spaces. A long note title or original name is cut
+to 100 bytes (about 50 Cyrillic letters), so the file name fits within the
+limit of the file system.
 
 **Replace spaces with underscores** (on by default) puts `_` in place of every
 space in the name. Turn it off to keep spaces:
@@ -242,7 +247,8 @@ in orange: such images can only be renamed.
   in the plugin settings.
 - Make sure ImageMagick has AVIF write support.
 - For HEIC files, make sure ImageMagick has HEIC read support.
-- Make sure the image is inserted into the active Markdown note.
+- Make sure the image is pasted or dropped into a Markdown note. Images added
+  in other ways are left alone.
 - If dragging an image from a file manager pastes a `file:///` address, make
   sure **Copy dragged images (file:/// links)** is on and the mode isn't
   **Off**.

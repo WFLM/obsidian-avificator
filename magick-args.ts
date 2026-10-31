@@ -11,11 +11,8 @@ export function buildConvertArgs(
   options: ConvertOptions
 ): string[] {
   // -strip would also drop the ICC profile and shift colors of wide-gamut
-  // photos, so remove every profile except ICC instead. Rotate the pixels
-  // first so the image stays upright without its EXIF orientation.
-  const metadataArgs = options.stripMetadata
-    ? ["-auto-orient", "+profile", "!icc,*"]
-    : [];
+  // photos, so remove every profile except ICC instead.
+  const metadataArgs = options.stripMetadata ? ["+profile", "!icc,*"] : [];
   // The ">" flag only shrinks images larger than the box, never enlarges.
   const sizeArgs = options.limitImageSize
     ? ["-resize", `${options.maxImageSize}x${options.maxImageSize}>`]
@@ -23,10 +20,20 @@ export function buildConvertArgs(
 
   return [
     inputPath,
+    // Rotates the pixels as the EXIF orientation says, so the image stays
+    // upright without it: older ImageMagick versions don't carry it over to
+    // AVIF, and removing metadata drops it.
+    "-auto-orient",
     ...metadataArgs,
     ...sizeArgs,
     "-quality",
     options.quality.toString(),
     outputPath,
   ];
+}
+
+// "magick identify" exists only in ImageMagick 7, while the info: format also
+// works with ImageMagick 6's convert. Prints the frame count once per frame.
+export function buildFrameCountArgs(inputPath: string): string[] {
+  return ["-ping", inputPath, "-format", "%n\n", "info:"];
 }

@@ -56,6 +56,45 @@ export function replaceImageEmbedLinks(
   };
 }
 
+// For a file that is no longer at filePath, so Obsidian can't resolve links to
+// it: whether the link path is its vault path, its path relative to the note's
+// folder, or the end of its path, such as a bare file name, that no other file
+// in the vault shares.
+export function linkPathPointsTo(
+  linkPath: string,
+  notePath: string,
+  filePath: string,
+  vaultPaths: readonly string[]
+): boolean {
+  if (linkPath === filePath) return true;
+  if (resolveFromFolder(notePath, linkPath) === filePath) return true;
+
+  const endsWithLinkPath = (path: string): boolean =>
+    path === linkPath || path.endsWith(`/${linkPath}`);
+  return (
+    endsWithLinkPath(filePath) &&
+    !vaultPaths.some((path) => path !== filePath && endsWithLinkPath(path))
+  );
+}
+
+// Links by bare name ignore case and folders, so a name used anywhere in the
+// vault would make such a link ambiguous.
+export function isFileNameTaken(fileName: string, vaultPaths: readonly string[]): boolean {
+  const lowerCased = fileName.toLowerCase();
+  return vaultPaths.some(
+    (path) => path.slice(path.lastIndexOf("/") + 1).toLowerCase() === lowerCased
+  );
+}
+
+function resolveFromFolder(notePath: string, linkPath: string): string {
+  const segments = notePath.split("/").slice(0, -1);
+  for (const segment of linkPath.split("/")) {
+    if (segment === "..") segments.pop();
+    else if (segment !== "." && segment !== "") segments.push(segment);
+  }
+  return segments.join("/");
+}
+
 function replaceTrimmedTarget(
   target: string,
   outputFileName: string,

@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { parseFileUriList, vaultRelativePath } from "./dropped-files";
+import { noteClosedMessage, parseFileUriList, vaultRelativePath } from "./dropped-files";
 
 test("turns dropped file URIs into paths", () => {
   assert.deepEqual(
@@ -33,4 +33,19 @@ test("treats files outside the vault as outside", () => {
   assert.equal(vaultRelativePath("/vault", "/home/user/a.png"), null);
   assert.equal(vaultRelativePath("/vault", "/vault2/a.png"), null);
   assert.equal(vaultRelativePath("/vault", "/vault"), null);
+});
+
+test("says which dropped image wasn't linked when the note was closed", () => {
+  assert.equal(noteClosedMessage("Plan", "a.png", 0), "Plan is no longer open, so a.png wasn't linked");
+});
+
+test("also counts the dropped images that weren't copied", () => {
+  assert.equal(
+    noteClosedMessage("Plan", "a.png", 1),
+    "Plan is no longer open, so a.png wasn't linked, and 1 more image wasn't copied"
+  );
+  assert.equal(
+    noteClosedMessage("Plan", "a.png", 3),
+    "Plan is no longer open, so a.png wasn't linked, and 3 more images weren't copied"
+  );
 });

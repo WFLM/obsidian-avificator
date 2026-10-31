@@ -33,6 +33,26 @@ test("sanitizes note titles for generated file names", () => {
   assert.equal(sanitizeFileStem("!!!", true), "Untitled");
 });
 
+test("keeps combining marks, as in Hindi or in names from macOS", () => {
+  assert.equal(sanitizeFileStem("हिन्दी नोट", false), "हिन्दी नोट");
+  assert.equal(sanitizeFileStem("cafe\u0301 menu", true), "cafe\u0301_menu");
+});
+
+test("cuts long titles and names to 100 bytes, between characters", () => {
+  assert.equal(sanitizeFileStem("x".repeat(300), true), "x".repeat(100));
+  assert.equal(sanitizeFileStem("Я".repeat(200), true), "Я".repeat(50));
+  assert.equal(sanitizeFileStem(`a${"я".repeat(60)}`, true), `a${"я".repeat(49)}`);
+});
+
+test("keeps names from long titles within the 255 bytes file systems allow", () => {
+  const stem = buildFileStem(
+    DEFAULT_FILE_NAME_TEMPLATE,
+    { ...VALUES, title: "Очень длинное название заметки ".repeat(10) },
+    WITH_UNDERSCORES
+  );
+  assert.ok(Buffer.byteLength(`${stem}.avif`) <= 255);
+});
+
 test("builds the default name with milliseconds and a duplicate counter", () => {
   assert.equal(
     buildFileStem(DEFAULT_FILE_NAME_TEMPLATE, VALUES, WITH_UNDERSCORES),

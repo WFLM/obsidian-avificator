@@ -34,3 +34,16 @@ export function vaultRelativePath(basePath: string, filePath: string): string | 
   }
   return relativePath.split(sep).join("/");
 }
+
+// For when the note was closed while a dropped image was being copied: that
+// image is in the vault but not linked, and the rest aren't copied.
+export function noteClosedMessage(
+  noteName: string,
+  fileName: string,
+  skippedCount: number
+): string {
+  const message = `${noteName} is no longer open, so ${fileName} wasn't linked`;
+  if (skippedCount === 0) return message;
+  const skipped = skippedCount === 1 ? "1 more image wasn't" : `${skippedCount} more images weren't`;
+  return `${message}, and ${skipped} copied`;
+}
