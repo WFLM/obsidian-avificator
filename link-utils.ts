@@ -9,16 +9,6 @@ const WIKI_IMAGE_EMBED_PATTERN = /!\[\[([^\]\n]+)\]\]/g;
 const MARKDOWN_IMAGE_EMBED_PATTERN =
   /!\[([^\]\n]*)\]\((<[^>\n]+>|(?:\\.|[^)\s])+)([ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?\)/g;
 
-export function sanitizeFileStem(value: string): string {
-  const sanitized = value
-    .trim()
-    .replace(/\s+/g, "_")
-    .replace(/[^\p{L}\p{N}._-]+/gu, "_")
-    .replace(/_+/g, "_")
-    .replace(/^[._-]+|[._-]+$/g, "");
-  return sanitized || "Untitled";
-}
-
 export function replaceImageEmbedLinks(
   content: string,
   outputFileName: string,

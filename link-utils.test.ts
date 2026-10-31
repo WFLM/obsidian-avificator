@@ -1,14 +1,9 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { replaceImageEmbedLinks, sanitizeFileStem } from "./link-utils";
+import { replaceImageEmbedLinks } from "./link-utils";
 
 const matchesOriginal = (target: string): boolean =>
   target === "image.png" || target === "attachments/image.png";
-
-test("sanitizes note titles for generated file names", () => {
-  assert.equal(sanitizeFileStem(" Plan #1 | draft "), "Plan_1_draft");
-  assert.equal(sanitizeFileStem("!!!"), "Untitled");
-});
 
 test("replaces an exact wiki embed", () => {
   const result = replaceImageEmbedLinks(
