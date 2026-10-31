@@ -1,0 +1,71 @@
+/* Fit the default file name template without scrolling. */
+.avificator-template-setting .setting-item-control input {
+  width: 24em;
+  max-width: 100%;
+}
+
+/* Separates groups of lines in a setting description. */
+.avificator-desc-group {
+  margin-top: var(--size-4-2);
+}
+
+/* Input formats: a compact table with Rename and Convert checkboxes. The
+   setting-item class gives it the same card as the other settings. */
+.setting-item.avificator-formats {
+  flex-direction: column;
+  gap: var(--size-4-2);
+  font-size: var(--setting-item-name-size, var(--font-ui-small));
+}
+
+/* The checkboxes sit right after the longest format name rather than at the
+   far edge, so it's clear which format they belong to. */
+.avificator-formats-table {
+  display: grid;
+  grid-template-columns: repeat(3, max-content);
+  gap: var(--size-2-1) var(--size-4-6);
+  /* Keeps the names in line with other setting names despite the row padding. */
+  margin-inline-start: calc(-1 * var(--size-4-2));
+}
+
+.avificator-formats-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  padding: var(--size-2-2) var(--size-4-2);
+  border-radius: var(--radius-s);
+}
+
+.avificator-format-row:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.avificator-formats-header {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.avificator-formats-rename,
+.avificator-formats-convert {
+  justify-self: center;
+}
+
+.avificator-format-extensions {
+  margin-left: var(--size-4-2);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+/* Columns that the current mode ignores. */
+.avificator-formats.mod-no-rename .avificator-formats-rename,
+.avificator-formats.mod-no-convert .avificator-formats-convert {
+  opacity: 0.4;
+}
+
+.avificator-formats-note {
+  font-size: var(--font-ui-smaller);
+}
+
+.avificator-formats-note:empty {
+  display: none;
+}

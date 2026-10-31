@@ -4,6 +4,12 @@ import { IMAGE_FORMATS, type ImageFormat } from "./formats";
 export const MODES = ["convert", "rename", "off"] as const;
 export type Mode = (typeof MODES)[number];
 
+// What happens to new images of a format: both, either, or neither.
+export interface FormatActions {
+  rename: boolean;
+  convert: boolean;
+}
+
 export const ANIMATED_IMAGE_ACTIONS = ["ask", "rename", "skip"] as const;
 export type AnimatedImageAction = (typeof ANIMATED_IMAGE_ACTIONS)[number];
 
@@ -15,10 +21,11 @@ export interface AVIFPluginSettings {
   limitImageSize: boolean;
   maxImageSize: number;
   animatedImageAction: AnimatedImageAction;
-  formats: Record<ImageFormat, boolean>;
+  formats: Record<ImageFormat, FormatActions>;
   fileNameTemplate: string;
   replaceSpaces: boolean;
   importDroppedFileLinks: boolean;
+  showStatusBar: boolean;
 }
 
 export const DEFAULT_SETTINGS: AVIFPluginSettings = {
@@ -29,21 +36,30 @@ export const DEFAULT_SETTINGS: AVIFPluginSettings = {
   limitImageSize: false,
   maxImageSize: 2000,
   animatedImageAction: "ask",
-  formats: allFormatsEnabled(),
+  formats: allFormatActions(),
   fileNameTemplate: DEFAULT_FILE_NAME_TEMPLATE,
   replaceSpaces: true,
   importDroppedFileLinks: true,
+  showStatusBar: true,
 };
 
-function allFormatsEnabled(): Record<ImageFormat, boolean> {
-  return Object.fromEntries(IMAGE_FORMATS.map((format) => [format, true])) as Record<
-    ImageFormat,
-    boolean
-  >;
+function allFormatActions(): Record<ImageFormat, FormatActions> {
+  return Object.fromEntries(
+    IMAGE_FORMATS.map((format) => [format, { rename: true, convert: true }])
+  ) as Record<ImageFormat, FormatActions>;
 }
 
 export function isMode(value: unknown): value is Mode {
   return MODES.some((mode) => mode === value);
+}
+
+// The mode switches everything off, or conversion only, on top of the format
+// actions.
+export function effectiveActions(mode: Mode, actions: FormatActions): FormatActions {
+  return {
+    rename: mode !== "off" && actions.rename,
+    convert: mode === "convert" && actions.convert,
+  };
 }
 
 export function isAnimatedImageAction(value: unknown): value is AnimatedImageAction {
@@ -118,18 +134,30 @@ export function parseSettings(storedData: unknown): AVIFPluginSettings {
       typeof stored.importDroppedFileLinks === "boolean"
         ? stored.importDroppedFileLinks
         : DEFAULT_SETTINGS.importDroppedFileLinks,
+    showStatusBar:
+      typeof stored.showStatusBar === "boolean"
+        ? stored.showStatusBar
+        : DEFAULT_SETTINGS.showStatusBar,
   };
 }
 
-// Formats missing from older settings, or added in newer versions, are on.
-function parseFormats(storedFormats: unknown): Record<ImageFormat, boolean> {
-  const formats = allFormatsEnabled();
+// Formats and actions missing from older settings, or added in newer
+// versions, are on. Older settings had one switch per format, which now turns
+// both actions on or off.
+function parseFormats(storedFormats: unknown): Record<ImageFormat, FormatActions> {
+  const formats = allFormatActions();
   if (typeof storedFormats !== "object" || storedFormats === null) return formats;
 
   const stored = storedFormats as Record<string, unknown>;
   for (const format of IMAGE_FORMATS) {
-    const enabled = stored[format];
-    if (typeof enabled === "boolean") formats[format] = enabled;
+    const value = stored[format];
+    if (typeof value === "boolean") {
+      formats[format] = { rename: value, convert: value };
+    } else if (typeof value === "object" && value !== null) {
+      const actions = value as Record<string, unknown>;
+      if (typeof actions.rename === "boolean") formats[format].rename = actions.rename;
+      if (typeof actions.convert === "boolean") formats[format].convert = actions.convert;
+    }
   }
   return formats;
 }

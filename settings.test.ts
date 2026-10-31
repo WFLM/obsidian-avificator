@@ -1,16 +1,21 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { parseSettings, validateMaxImageSize } from "./settings";
+import { effectiveActions, parseSettings, validateMaxImageSize } from "./settings";
+
+const BOTH = { rename: true, convert: true };
+const RENAME_ONLY = { rename: true, convert: false };
+const CONVERT_ONLY = { rename: false, convert: true };
+const NONE = { rename: false, convert: false };
 
 const ALL_FORMATS = {
-  PNG: true,
-  JPEG: true,
-  WEBP: true,
-  HEIC: true,
-  GIF: true,
-  BMP: true,
-  TIFF: true,
-  JXL: true,
+  PNG: BOTH,
+  JPEG: BOTH,
+  WEBP: BOTH,
+  HEIC: BOTH,
+  GIF: BOTH,
+  BMP: BOTH,
+  TIFF: BOTH,
+  JXL: BOTH,
 };
 
 const DEFAULTS = {
@@ -25,6 +30,7 @@ const DEFAULTS = {
   fileNameTemplate: "{title}-{date:YYYYMMDDHHmmssSSS}{counter}",
   replaceSpaces: true,
   importDroppedFileLinks: true,
+  showStatusBar: true,
 };
 
 test("uses defaults when nothing is stored", () => {
@@ -41,10 +47,11 @@ test("keeps valid stored settings and trims the ImageMagick path", () => {
       limitImageSize: true,
       maxImageSize: 1600,
       animatedImageAction: "skip",
-      formats: { ...ALL_FORMATS, GIF: false, TIFF: false },
+      formats: { ...ALL_FORMATS, HEIC: RENAME_ONLY, GIF: CONVERT_ONLY, TIFF: NONE },
       fileNameTemplate: " {date:YYYY-MM-DD} {title} ",
       replaceSpaces: false,
       importDroppedFileLinks: false,
+      showStatusBar: false,
     }),
     {
       mode: "rename",
@@ -54,10 +61,11 @@ test("keeps valid stored settings and trims the ImageMagick path", () => {
       limitImageSize: true,
       maxImageSize: 1600,
       animatedImageAction: "skip",
-      formats: { ...ALL_FORMATS, GIF: false, TIFF: false },
+      formats: { ...ALL_FORMATS, HEIC: RENAME_ONLY, GIF: CONVERT_ONLY, TIFF: NONE },
       fileNameTemplate: "{date:YYYY-MM-DD} {title}",
       replaceSpaces: false,
       importDroppedFileLinks: false,
+      showStatusBar: false,
     }
   );
   assert.equal(parseSettings({ mode: "off" }).mode, "off");
@@ -77,6 +85,7 @@ test("falls back to defaults for invalid stored values", () => {
       fileNameTemplate: "   ",
       replaceSpaces: "no",
       importDroppedFileLinks: "no",
+      showStatusBar: "no",
     }),
     DEFAULTS
   );
@@ -93,6 +102,7 @@ test("falls back to defaults for invalid stored values", () => {
       fileNameTemplate: "{title}-{foo}",
       replaceSpaces: 0,
       importDroppedFileLinks: 0,
+      showStatusBar: 0,
     }),
     DEFAULTS
   );
@@ -102,11 +112,33 @@ test("keeps settings saved before the newer options existed", () => {
   assert.deepEqual(parseSettings({ quality: 30 }), { ...DEFAULTS, quality: 30 });
 });
 
-test("enables formats missing from stored settings", () => {
-  assert.deepEqual(parseSettings({ formats: { PNG: false } }).formats, {
+test("enables formats and actions missing from stored settings", () => {
+  assert.deepEqual(
+    parseSettings({ formats: { PNG: NONE, JPEG: { convert: false }, WEBP: { rename: "no" } } })
+      .formats,
+    { ...ALL_FORMATS, PNG: NONE, JPEG: RENAME_ONLY }
+  );
+});
+
+test("turns formats switched on or off in older settings into both actions or none", () => {
+  assert.deepEqual(parseSettings({ formats: { PNG: false, GIF: true } }).formats, {
     ...ALL_FORMATS,
-    PNG: false,
+    PNG: NONE,
   });
+});
+
+test("follows the format actions in Convert mode", () => {
+  assert.deepEqual(effectiveActions("convert", CONVERT_ONLY), CONVERT_ONLY);
+  assert.deepEqual(effectiveActions("convert", BOTH), BOTH);
+});
+
+test("only renames in Rename only mode, and only where renaming is on", () => {
+  assert.deepEqual(effectiveActions("rename", BOTH), RENAME_ONLY);
+  assert.deepEqual(effectiveActions("rename", CONVERT_ONLY), NONE);
+});
+
+test("does nothing when the mode is off", () => {
+  assert.deepEqual(effectiveActions("off", BOTH), NONE);
 });
 
 test("accepts only a positive whole number as the maximum image size", () => {

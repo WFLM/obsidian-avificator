@@ -3,10 +3,13 @@ export interface FormatSupport {
   write: boolean;
 }
 
-export interface MagickStatus {
+// One fact per line, so supported and unsupported things can be colored apart.
+export interface StatusLine {
+  text: string;
   ok: boolean;
-  message: string;
 }
+
+export type MagickStatus = StatusLine[];
 
 // A line of `magick -list format`, e.g. "     JPEG* JPEG      rw-   ...".
 // ImageMagick 6 prints no module column.
@@ -30,29 +33,29 @@ export function describeMagickSupport(
 ): MagickStatus {
   const version = /ImageMagick (\S+)/.exec(versionOutput)?.[1];
   if (!version && formats.size === 0) {
-    return {
-      ok: false,
-      message: "The program at this path doesn't look like ImageMagick.",
-    };
+    return [{ text: "The program at this path doesn't look like ImageMagick.", ok: false }];
   }
 
   const canWriteAvif = formats.get("AVIF")?.write ?? false;
   const readable = inputFormats.filter((format) => formats.get(format)?.read);
   const unreadable = inputFormats.filter((format) => !formats.get(format)?.read);
 
-  const parts = [
-    version ? `ImageMagick ${version}:` : "ImageMagick:",
-    canWriteAvif
-      ? "AVIF output supported."
-      : "AVIF output is not supported, so images can't be converted.",
+  const lines: MagickStatus = [
+    {
+      text: `${version ? `ImageMagick ${version}` : "ImageMagick"}: AVIF ${
+        canWriteAvif ? "supported" : "not supported"
+      }.`,
+      ok: canWriteAvif,
+    },
   ];
-  if (readable.length > 0) parts.push(`Can read ${readable.join(", ")}.`);
-  if (unreadable.length > 0) parts.push(`Can't read ${unreadable.join(", ")}.`);
-
-  return {
-    ok: canWriteAvif && unreadable.length === 0,
-    message: parts.join(" "),
-  };
+  if (!canWriteAvif) lines.push({ text: "Images can't be converted.", ok: false });
+  if (readable.length > 0) {
+    lines.push({ text: `Can read ${readable.join(", ")}.`, ok: true });
+  }
+  if (unreadable.length > 0) {
+    lines.push({ text: `Can't read ${unreadable.join(", ")}.`, ok: false });
+  }
+  return lines;
 }
 
 // `magick identify -format "%n\n"` prints the frame count once per frame.
@@ -63,12 +66,9 @@ export function parseFrameCount(output: string): number | null {
 
 export function describeMagickError(error: unknown): MagickStatus {
   if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-    return { ok: false, message: "ImageMagick not found at this path." };
+    return [{ text: "ImageMagick not found at this path.", ok: false }];
   }
 
   const message = error instanceof Error ? error.message : String(error);
-  return {
-    ok: false,
-    message: `Could not run ImageMagick: ${message.split("\n")[0]}`,
-  };
+  return [{ text: `Could not run ImageMagick: ${message.split("\n")[0]}`, ok: false }];
 }

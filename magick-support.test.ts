@@ -50,20 +50,19 @@ test("parses the ImageMagick 6 format list without a module column", () => {
 });
 
 test("reports full support with the version", () => {
-  assert.deepEqual(describe(FULL_FORMAT_LIST), {
-    ok: true,
-    message:
-      "ImageMagick 7.1.1-41: AVIF output supported. Can read PNG, JPEG, WEBP, HEIC.",
-  });
+  assert.deepEqual(describe(FULL_FORMAT_LIST), [
+    { text: "ImageMagick 7.1.1-41: AVIF supported.", ok: true },
+    { text: "Can read PNG, JPEG, WEBP, HEIC.", ok: true },
+  ]);
 });
 
 test("reports input formats ImageMagick can't read", () => {
   const withoutHeic = FULL_FORMAT_LIST.replace(/^.*HEIC  HEIC.*\n/m, "");
-  assert.deepEqual(describe(withoutHeic), {
-    ok: false,
-    message:
-      "ImageMagick 7.1.1-41: AVIF output supported. Can read PNG, JPEG, WEBP. Can't read HEIC.",
-  });
+  assert.deepEqual(describe(withoutHeic), [
+    { text: "ImageMagick 7.1.1-41: AVIF supported.", ok: true },
+    { text: "Can read PNG, JPEG, WEBP.", ok: true },
+    { text: "Can't read HEIC.", ok: false },
+  ]);
 });
 
 test("reports missing AVIF output", () => {
@@ -71,28 +70,25 @@ test("reports missing AVIF output", () => {
     "AVIF  HEIC      rw+",
     "AVIF  HEIC      r--"
   );
-  assert.deepEqual(describe(readOnlyAvif), {
-    ok: false,
-    message:
-      "ImageMagick 7.1.1-41: AVIF output is not supported, so images can't be converted. Can read PNG, JPEG, WEBP, HEIC.",
-  });
+  assert.deepEqual(describe(readOnlyAvif), [
+    { text: "ImageMagick 7.1.1-41: AVIF not supported.", ok: false },
+    { text: "Images can't be converted.", ok: false },
+    { text: "Can read PNG, JPEG, WEBP, HEIC.", ok: true },
+  ]);
 });
 
 test("checks only the given input formats", () => {
   const withoutHeic = FULL_FORMAT_LIST.replace(/^.*HEIC  HEIC.*\n/m, "");
-  assert.deepEqual(describe(withoutHeic, ["PNG", "JPEG"]), {
-    ok: true,
-    message: "ImageMagick 7.1.1-41: AVIF output supported. Can read PNG, JPEG.",
-  });
+  assert.deepEqual(describe(withoutHeic, ["PNG", "JPEG"]), [
+    { text: "ImageMagick 7.1.1-41: AVIF supported.", ok: true },
+    { text: "Can read PNG, JPEG.", ok: true },
+  ]);
 });
 
 test("reports a program that doesn't look like ImageMagick", () => {
   assert.deepEqual(
     describeMagickSupport("hello\n", parseFormatList("world\n"), INPUT_FORMATS),
-    {
-      ok: false,
-      message: "The program at this path doesn't look like ImageMagick.",
-    }
+    [{ text: "The program at this path doesn't look like ImageMagick.", ok: false }]
   );
 });
 
@@ -100,18 +96,16 @@ test("reports a missing executable", () => {
   const error = Object.assign(new Error("spawn magick ENOENT"), {
     code: "ENOENT",
   });
-  assert.deepEqual(describeMagickError(error), {
-    ok: false,
-    message: "ImageMagick not found at this path.",
-  });
+  assert.deepEqual(describeMagickError(error), [
+    { text: "ImageMagick not found at this path.", ok: false },
+  ]);
 });
 
 test("reports other errors with the first line of their message", () => {
   const error = new Error("spawn /usr/bin/magick EACCES\nmore details");
-  assert.deepEqual(describeMagickError(error), {
-    ok: false,
-    message: "Could not run ImageMagick: spawn /usr/bin/magick EACCES",
-  });
+  assert.deepEqual(describeMagickError(error), [
+    { text: "Could not run ImageMagick: spawn /usr/bin/magick EACCES", ok: false },
+  ]);
 });
 
 test("reads the frame count from identify output", () => {

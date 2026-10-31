@@ -7,6 +7,7 @@ import {
   findPartialVariable,
   findUnknownVariable,
   insertVariable,
+  keepFileStem,
   sanitizeFileStem,
   templateSuggestions,
 } from "./file-name";
@@ -78,6 +79,11 @@ test("replaces characters that can't be in file names or links", () => {
     buildFileStem("{date:HH:mm} a/b#c", VALUES, WITH_SPACES),
     "14-30 a-b-c"
   );
+});
+
+test("keeps the original name and appends a number when it is taken", () => {
+  assert.equal(keepFileStem("Pasted image 1", 0), "Pasted image 1");
+  assert.equal(keepFileStem("Pasted image 1", 2), "Pasted image 1 2");
 });
 
 test("falls back to Untitled for an empty name", () => {

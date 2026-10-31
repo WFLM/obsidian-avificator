@@ -30,6 +30,7 @@ import {
   findPartialVariable,
   findUnknownVariable,
   insertVariable,
+  keepFileStem,
   templateSuggestions,
   type FileNameValues,
   type TemplateSuggestion,
@@ -54,6 +55,7 @@ import {
 import {
   DEFAULT_SETTINGS,
   MODES,
+  effectiveActions,
   isAnimatedImageAction,
   isMode,
   normalizeFileNameTemplate,
@@ -63,6 +65,7 @@ import {
   validateQuality,
   type AVIFPluginSettings,
   type AnimatedImageAction,
+  type FormatActions,
   type Mode,
 } from "./settings";
 
@@ -87,6 +90,13 @@ const ANIMATED_IMAGE_ACTION_LABELS: Record<AnimatedImageAction, string> = {
 };
 
 type MultiFrameKind = "animated" | "pages";
+// Why an image of a format with Convert on can't be converted.
+type ConversionObstacle = MultiFrameKind | "unreadable";
+
+const FORMAT_ACTION_LABELS: Record<keyof FormatActions, string> = {
+  rename: "Rename",
+  convert: "Convert",
+};
 
 const MULTI_FRAME_TEXT: Record<
   MultiFrameKind,
@@ -136,6 +146,14 @@ function fileNameValues(title: string, original: string, date: Date): FileNameVa
   };
 }
 
+// Puts every line of a setting description in its own block, so that several
+// sentences don't run together.
+function descLines(...lines: string[]): DocumentFragment {
+  return createFragment((fragment) => {
+    for (const line of lines) fragment.createDiv({ text: line });
+  });
+}
+
 export default class AVIFOnInsertPlugin extends Plugin {
   settings: AVIFPluginSettings = { ...DEFAULT_SETTINGS };
   private readonly noteQueues = new Map<string, Promise<void>>();
@@ -172,6 +190,18 @@ export default class AVIFOnInsertPlugin extends Plugin {
     this.statusBarItem.setAttribute("data-tooltip-position", "top");
     this.registerDomEvent(this.statusBarItem, "click", (evt) => this.showModeMenu(evt));
     this.updateStatusBar();
+
+    // The status bar can be hidden, so modes can also be switched with commands.
+    for (const mode of MODES) {
+      this.addCommand({
+        id: `switch-mode-${mode}`,
+        name: `Switch mode to ${MODE_LABELS[mode]}`,
+        callback: async () => {
+          await this.setMode(mode);
+          new Notice(`AVIFicator mode: ${MODE_LABELS[mode]}`);
+        },
+      });
+    }
 
     this.registerEvent(
       this.app.workspace.on("editor-drop", (evt, editor, info) =>
@@ -212,32 +242,37 @@ export default class AVIFOnInsertPlugin extends Plugin {
     menu.showAtMouseEvent(evt);
   }
 
-  private updateStatusBar(): void {
+  updateStatusBar(): void {
     this.statusBarItem?.setText(`AVIF: ${this.settings.mode}`);
+    this.statusBarItem?.toggle(this.settings.showStatusBar);
   }
 
   private async handleCreatedFile(file: TAbstractFile): Promise<void> {
+    if (!(file instanceof TFile)) return;
     // The mode is read when the image arrives, so switching modes doesn't
     // affect images that are already queued.
-    const mode = this.settings.mode;
-    if (mode === "off") return;
-    if (!(file instanceof TFile)) return;
-    const format = this.enabledFormat(file.extension);
-    if (!format) return;
+    const plan = this.planImage(file.extension);
+    if (!plan) return;
 
     const sourceNote = this.app.workspace.getActiveFile();
     if (!sourceNote || sourceNote.extension !== "md") return;
 
+    const { format, actions } = plan;
     await this.queueNoteOperation(sourceNote.path, () =>
-      mode === "rename"
-        ? this.renameLinkedImage(file, sourceNote)
-        : this.convertLinkedImage(file, sourceNote, format)
+      actions.convert
+        ? this.convertLinkedImage(file, sourceNote, format, actions.rename)
+        : this.renameLinkedImage(file, sourceNote)
     );
   }
 
-  private enabledFormat(extension: string): ImageFormat | null {
+  // What to do with a new image with this extension, or null if nothing.
+  private planImage(
+    extension: string
+  ): { format: ImageFormat; actions: FormatActions } | null {
     const format = formatForExtension(extension);
-    return format && this.settings.formats[format] ? format : null;
+    if (!format) return null;
+    const actions = effectiveActions(this.settings.mode, this.settings.formats[format]);
+    return actions.rename || actions.convert ? { format, actions } : null;
   }
 
   // When a drop carries file:/// addresses but no plain text, as drags from a
@@ -264,7 +299,7 @@ export default class AVIFOnInsertPlugin extends Plugin {
     }
 
     const filePaths = parseFileUriList(dataTransfer.getData("text/uri-list"));
-    if (!filePaths?.every((filePath) => this.enabledFormat(extname(filePath).slice(1)))) {
+    if (!filePaths?.every((filePath) => this.planImage(extname(filePath).slice(1)))) {
       return;
     }
 
@@ -315,7 +350,8 @@ export default class AVIFOnInsertPlugin extends Plugin {
   private async convertLinkedImage(
     file: TFile,
     sourceNote: TFile,
-    format: ImageFormat
+    format: ImageFormat,
+    rename: boolean
   ): Promise<void> {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) {
@@ -330,13 +366,13 @@ export default class AVIFOnInsertPlugin extends Plugin {
       const isLinked = await this.waitForImageLink(sourceNote, file.path);
       if (!isLinked) return;
 
-      const multiFrameKind = await this.getMultiFrameKind(adapter, file, format);
-      if (multiFrameKind) {
-        await this.handleMultiFrameImage(file, sourceNote, multiFrameKind);
+      const obstacle = await this.findConversionObstacle(adapter, file, format);
+      if (obstacle) {
+        await this.handleUnconvertibleImage(file, sourceNote, obstacle, rename);
         return;
       }
 
-      outputTarget = await this.reserveOutputTarget(file, sourceNote, "avif");
+      outputTarget = await this.reserveOutputTarget(file, sourceNote, "avif", rename);
 
       await execFileAsync(
         this.settings.magickPath,
@@ -391,42 +427,61 @@ export default class AVIFOnInsertPlugin extends Plugin {
   }
 
   // AVIF keeps only the first frame visible, so animated and multi-page
-  // images are never converted.
-  private async getMultiFrameKind(
+  // images are never converted. Neither are images ImageMagick can't open.
+  private async findConversionObstacle(
     adapter: FileSystemAdapter,
     file: TFile,
     format: ImageFormat
-  ): Promise<MultiFrameKind | null> {
-    if (format === "PNG") {
-      const bytes = new Uint8Array(await this.app.vault.readBinary(file));
-      return isAnimatedPng(bytes) ? "animated" : null;
-    }
-
+  ): Promise<ConversionObstacle | null> {
+    let frameCount: number;
     try {
       const { stdout } = await execFileAsync(
         this.settings.magickPath,
         ["identify", "-ping", "-format", "%n\n", adapter.getFullPath(file.path)],
         { timeout: MAGICK_CHECK_TIMEOUT_MS, windowsHide: true }
       );
-      if ((parseFrameCount(stdout) ?? 1) <= 1) return null;
+      frameCount = parseFrameCount(stdout) ?? 1;
     } catch (error: unknown) {
-      // If ImageMagick can't read the file, the conversion fails and reports it.
-      console.warn("Could not count image frames", { error, imagePath: file.path });
-      return null;
+      console.warn("ImageMagick could not open the image", { error, imagePath: file.path });
+      return "unreadable";
     }
+
+    // ImageMagick counts only the first frame of an animated PNG.
+    if (format === "PNG") {
+      const bytes = new Uint8Array(await this.app.vault.readBinary(file));
+      return isAnimatedPng(bytes) ? "animated" : null;
+    }
+    if (frameCount <= 1) return null;
     return format === "TIFF" ? "pages" : "animated";
   }
 
-  private async handleMultiFrameImage(
+  // Does what is left when an image can't be converted: renaming, if it is on
+  // for the format.
+  private async handleUnconvertibleImage(
     file: TFile,
     sourceNote: TFile,
-    kind: MultiFrameKind
+    obstacle: ConversionObstacle,
+    rename: boolean
   ): Promise<void> {
+    if (obstacle === "unreadable") {
+      if (rename) {
+        new Notice(`Can't convert ${file.name}: ImageMagick couldn't open it. Renaming only.`);
+        await this.renameLinkedImage(file, sourceNote);
+      } else {
+        new Notice(`Left as is: ImageMagick couldn't open ${file.name}`);
+      }
+      return;
+    }
+    if (!rename) {
+      new Notice(`Left as is: ${file.name} ${MULTI_FRAME_TEXT[obstacle].state}`);
+      return;
+    }
+
     let action = this.settings.animatedImageAction;
     if (action === "ask") {
-      action = await askMultiFrameAction(this.app, file.name, kind);
+      action = await askMultiFrameAction(this.app, file.name, obstacle);
     } else if (action === "skip") {
-      new Notice(`Left as is: ${file.name} ${MULTI_FRAME_TEXT[kind].state}`);
+      new Notice(`Left as is: ${file.name} ${MULTI_FRAME_TEXT[obstacle].state}`);
     }
 
     if (action === "rename") {
@@ -493,19 +548,23 @@ export default class AVIFOnInsertPlugin extends Plugin {
     }
   }
 
+  // Without renaming, the output keeps the image's own name.
   private async reserveOutputTarget(
     file: TFile,
     sourceNote: TFile,
-    extension: string
+    extension: string,
+    rename = true
   ): Promise<OutputTarget> {
     const folderPath = file.path.substring(0, file.path.lastIndexOf("/") + 1);
     const values = fileNameValues(sourceNote.basename, file.basename, new Date());
 
     for (let attempt = 0; ; attempt += 1) {
-      const stem = buildFileStem(this.settings.fileNameTemplate, values, {
-        attempt,
-        replaceSpaces: this.settings.replaceSpaces,
-      });
+      const stem = rename
+        ? buildFileStem(this.settings.fileNameTemplate, values, {
+            attempt,
+            replaceSpaces: this.settings.replaceSpaces,
+          })
+        : keepFileStem(file.basename, attempt);
       const fileName = `${stem}.${extension}`;
       const vaultPath = folderPath + fileName;
 
@@ -771,7 +830,7 @@ class AVIFSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Mode")
-      .setDesc("Convert new images to AVIF, only rename them, or leave them untouched.")
+      .setDesc("What to do with images you add to notes.")
       .addDropdown((dropdown) =>
         dropdown
           .addOptions(MODE_LABELS)
@@ -779,26 +838,72 @@ class AVIFSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             if (isMode(value)) {
               await this.plugin.setMode(value);
+              // The format table dims the columns this mode ignores.
+              this.display();
             }
           })
       );
 
+    new Setting(containerEl)
+      .setName("Show mode in status bar")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.showStatusBar)
+          .onChange(async (value) => {
+            this.plugin.settings.showStatusBar = value;
+            this.plugin.updateStatusBar();
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Copy dragged images (file:/// links)")
+      .setDesc(
+        descLines(
+          "Dragging an image from a file manager sometimes inserts a file:/// link instead of the image.",
+          "With this on, the image is copied into the vault."
+        )
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.importDroppedFileLinks)
+          .onChange(async (value) => {
+            this.plugin.settings.importDroppedFileLinks = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl).setName("File names").setHeading();
+
     const templateSetting = new Setting(containerEl)
       .setName("File name template")
+      .setClass("avificator-template-setting")
       .setDesc(
         createFragment((fragment) => {
-          fragment.appendText(
-            "Variables: {title} note title, {original} original file name, {date:FORMAT} date and time, {counter} 000, or 001, 002, and so on if the name is taken. Type { to pick one."
+          fragment.append(
+            descLines(
+              "{title} — note title",
+              "{original} — original file name",
+              "{date:FORMAT} — date and time, e.g. {date:YYYY-MM-DD}",
+              "{counter} — 000, or 001, 002… if the name is taken",
+              "Type { to pick a variable."
+            )
           );
-          fragment.createEl("br");
-          fragment.appendText(
-            "Date format: YYYY year, MM month, DD day, HH hours, mm minutes, ss seconds, SSS milliseconds. See the "
-          );
-          fragment.createEl("a", { text: "format reference", href: MOMENT_FORMAT_URL });
-          fragment.appendText(".");
+          fragment.createDiv({
+            cls: "avificator-desc-group",
+            text: "Date: YYYY year, MM month, DD day",
+          });
+          fragment.createDiv({
+            text: "Time: HH hours, mm minutes, ss seconds, SSS milliseconds",
+          });
+          fragment
+            .createDiv()
+            .createEl("a", { text: "More date formats", href: MOMENT_FORMAT_URL });
         })
       );
-    const templatePreviewEl = templateSetting.descEl.createDiv();
+    const templatePreviewEl = templateSetting.descEl.createDiv({
+      cls: ["avificator-desc-group", "mod-success"],
+    });
     const updateTemplatePreview = () => {
       const stem = buildFileStem(
         this.plugin.settings.fileNameTemplate,
@@ -829,9 +934,7 @@ class AVIFSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Replace spaces with underscores")
-      .setDesc(
-        "Use underscores instead of spaces in file names. Characters that can't be in file names or links are always replaced."
-      )
+      .setDesc("My note → My_note")
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.replaceSpaces)
@@ -842,9 +945,14 @@ class AVIFSettingTab extends PluginSettingTab {
           })
       );
 
+    new Setting(containerEl)
+      .setName("Conversion")
+      .setDesc("Used in Convert to AVIF mode for formats with Convert checked.")
+      .setHeading();
+
     const qualitySetting = new Setting(containerEl)
       .setName("Image quality")
-      .setDesc("Set the quality for AVIF conversion (0-100). Default is 80.");
+      .setDesc(descLines("From 0 (lowest) to 100 (highest).", "Default is 80."));
     qualitySetting.addText((text) =>
       text
         .setPlaceholder("Enter quality (0-100)")
@@ -867,7 +975,10 @@ class AVIFSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Remove metadata")
       .setDesc(
-        "Remove EXIF and XMP data, including GPS location and camera details, from converted images. Color profiles are kept. Works only in Convert to AVIF mode."
+        descLines(
+          "Removes GPS location, camera details, and other EXIF data.",
+          "Color profiles are kept."
+        )
       )
       .addToggle((toggle) =>
         toggle
@@ -880,9 +991,6 @@ class AVIFSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Limit image size")
-      .setDesc(
-        "Shrink converted images whose longer side exceeds the maximum size, keeping their proportions. Smaller images are left as is. Works only in Convert to AVIF mode."
-      )
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.limitImageSize)
@@ -897,7 +1005,7 @@ class AVIFSettingTab extends PluginSettingTab {
     if (this.plugin.settings.limitImageSize) {
       const maxSizeSetting = new Setting(containerEl)
         .setName("Maximum size")
-        .setDesc("Longer side in pixels. Default is 2000.");
+        .setDesc(descLines("Longer side in pixels.", "Default is 2000."));
       maxSizeSetting.addText((text) =>
         text
           .setPlaceholder(DEFAULT_SETTINGS.maxImageSize.toString())
@@ -917,10 +1025,8 @@ class AVIFSettingTab extends PluginSettingTab {
     }
 
     new Setting(containerEl)
-      .setName("Animated and multi-page images")
-      .setDesc(
-        "Converting them to AVIF would lose the animation or all pages but the first, so they are never converted. Choose what to do with them in Convert to AVIF mode."
-      )
+      .setName("When you add an animated or multi-page image")
+      .setDesc("Such images can't be converted to AVIF.")
       .addDropdown((dropdown) =>
         dropdown
           .addOptions(ANIMATED_IMAGE_ACTION_LABELS)
@@ -933,29 +1039,22 @@ class AVIFSettingTab extends PluginSettingTab {
           })
       );
 
-    new Setting(containerEl)
-      .setName("Copy images dropped as file links")
-      .setDesc(
-        "Sometimes, for example on Linux with Wayland, Obsidian inserts a file:/// address instead of copying an image dragged from a file manager. Copy such images into the vault instead, so they are converted or renamed. Works in Convert to AVIF and Rename only modes."
-      )
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.importDroppedFileLinks)
-          .onChange(async (value) => {
-            this.plugin.settings.importDroppedFileLinks = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
     const magickPathSetting = new Setting(containerEl)
       .setName("ImageMagick path")
       .setDesc(
-        "Command name or full path to the magick executable, e.g. /opt/homebrew/bin/magick. Default is magick."
+        descLines(
+          "Set the full path if magick isn't found.",
+          "For example, /opt/homebrew/bin/magick."
+        )
       );
     const magickStatusEl = magickPathSetting.descEl.createDiv();
-    const formatWarningEls = new Map<ImageFormat, HTMLElement>();
+    const formatNameEls = new Map<ImageFormat, HTMLElement>();
+    // Goes at the end of the format table, which is built further down.
+    const formatsNoteEl = createDiv({ cls: ["avificator-formats-note", "mod-warning"] });
+    const showMagickStatus = () =>
+      this.showMagickStatus(magickStatusEl, formatNameEls, formatsNoteEl);
     const checkMagickLater = debounce(
-      () => void this.showMagickStatus(magickStatusEl, formatWarningEls),
+      () => void showMagickStatus(),
       MAGICK_CHECK_DELAY_MS,
       true
     );
@@ -971,57 +1070,98 @@ class AVIFSettingTab extends PluginSettingTab {
     );
 
     new Setting(containerEl)
-      .setName("Image formats")
-      .setDesc("Images of the selected formats are processed when you add them to a note.")
+      .setName("Input formats")
       .setHeading();
-    for (const format of IMAGE_FORMATS) {
-      const formatSetting = new Setting(containerEl)
-        .setName(format)
-        .setDesc(FORMAT_EXTENSIONS[format].map((extension) => `.${extension}`).join(", "))
-        .addToggle((toggle) =>
-          toggle
-            .setValue(this.plugin.settings.formats[format])
-            .onChange(async (value) => {
-              this.plugin.settings.formats[format] = value;
-              await this.plugin.saveSettings();
-              // The ImageMagick status only covers the selected formats.
-              checkMagickLater();
-            })
-        );
-      formatWarningEls.set(format, formatSetting.descEl.createDiv({ cls: "mod-warning" }));
+    // A compact table of checkboxes rather than two toggles per format, in a
+    // setting card like the items around it.
+    const formatsEl = containerEl.createDiv({ cls: ["setting-item", "avificator-formats"] });
+    // Dim the columns that the current mode ignores.
+    formatsEl.toggleClass("mod-no-rename", this.plugin.settings.mode === "off");
+    formatsEl.toggleClass("mod-no-convert", this.plugin.settings.mode !== "convert");
+    const actionLabels = Object.entries(FORMAT_ACTION_LABELS) as [
+      keyof FormatActions,
+      string,
+    ][];
+    const tableEl = formatsEl.createDiv({ cls: "avificator-formats-table" });
+    const headerEl = tableEl.createDiv({ cls: "avificator-formats-row" });
+    headerEl.createDiv();
+    for (const [action, label] of actionLabels) {
+      headerEl.createDiv({
+        cls: ["avificator-formats-header", `avificator-formats-${action}`],
+        text: label,
+      });
     }
+    for (const format of IMAGE_FORMATS) {
+      // A row of its own, so it can be highlighted under the pointer.
+      const rowEl = tableEl.createDiv({
+        cls: ["avificator-formats-row", "avificator-format-row"],
+      });
+      const nameEl = rowEl.createDiv();
+      nameEl.createSpan({ text: format });
+      nameEl.createSpan({
+        cls: "avificator-format-extensions",
+        text: FORMAT_EXTENSIONS[format].map((extension) => `.${extension}`).join(" "),
+      });
+      formatNameEls.set(format, nameEl);
 
-    void this.showMagickStatus(magickStatusEl, formatWarningEls);
+      for (const [action, label] of actionLabels) {
+        const checkbox = rowEl
+          .createDiv({ cls: `avificator-formats-${action}` })
+          .createEl("input", {
+            type: "checkbox",
+            attr: { "aria-label": `${label} ${format}` },
+          });
+        checkbox.checked = this.plugin.settings.formats[format][action];
+        checkbox.addEventListener("change", () => {
+          this.plugin.settings.formats[format][action] = checkbox.checked;
+          void this.plugin.saveSettings();
+        });
+      }
+    }
+    formatsEl.appendChild(formatsNoteEl);
+
+    void showMagickStatus();
   }
 
   private async showMagickStatus(
     statusEl: HTMLElement,
-    formatWarningEls: Map<ImageFormat, HTMLElement>
+    formatNameEls: Map<ImageFormat, HTMLElement>,
+    formatsNoteEl: HTMLElement
   ): Promise<void> {
     // Typing in the path field can start several checks; show only the last.
     const checkId = ++this.magickCheckId;
     statusEl.setText("Checking ImageMagick...");
-    statusEl.removeClass("mod-success", "mod-warning");
 
-    const enabledFormats = IMAGE_FORMATS.filter(
-      (format) => this.plugin.settings.formats[format]
-    );
+    // All formats the plugin knows are checked, whether they are on or not, so
+    // the status shows what ImageMagick can do rather than what is selected.
     const { status, formats } = await checkMagick(
       this.plugin.settings.magickPath,
-      enabledFormats
+      IMAGE_FORMATS
     );
     if (checkId !== this.magickCheckId) return;
 
-    statusEl.setText(status.message);
-    statusEl.addClass(status.ok ? "mod-success" : "mod-warning");
+    statusEl.empty();
+    for (const line of status) {
+      statusEl.createDiv({
+        text: line.text,
+        cls: line.ok ? "mod-success" : "mod-warning",
+      });
+    }
 
     // Without a format list (ImageMagick not found), the status says it all.
-    for (const [format, warningEl] of formatWarningEls) {
-      const unreadable = formats.size > 0 && !formats.get(format)?.read;
-      warningEl.setText(
-        unreadable
-          ? "ImageMagick can't read this format, so conversion will fail. Rename only mode still works."
-          : ""
+    const unreadable = IMAGE_FORMATS.filter(
+      (format) => formats.size > 0 && !formats.get(format)?.read
+    );
+    for (const [format, nameEl] of formatNameEls) {
+      nameEl.toggleClass("mod-warning", unreadable.includes(format));
+    }
+    formatsNoteEl.empty();
+    if (unreadable.length > 0) {
+      formatsNoteEl.append(
+        descLines(
+          "ImageMagick can't read the formats in orange.",
+          "Such images can only be renamed."
+        )
       );
     }
   }

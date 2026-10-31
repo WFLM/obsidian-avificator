@@ -51,6 +51,12 @@ export function buildFileStem(
   return (replaceSpaces ? stem.replace(/\s+/g, "_") : stem) || "Untitled";
 }
 
+// For images converted without renaming: the same name, with " 1", " 2", and
+// so on if it is taken, as when a template has no {counter}.
+export function keepFileStem(stem: string, attempt: number): string {
+  return attempt > 0 ? `${stem} ${attempt}` : stem;
+}
+
 export function findUnknownVariable(template: string): string | null {
   for (const [variable, name = ""] of template.matchAll(VARIABLE_PATTERN)) {
     const isKnown =
