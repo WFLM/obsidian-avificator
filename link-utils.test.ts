@@ -27,6 +27,18 @@ test("preserves a wiki embed path and alias", () => {
   assert.equal(result.replacementCount, 1);
 });
 
+// Obsidian keeps single brackets in the names of pasted and dropped files.
+test("replaces a wiki embed with a bracket in the file name", () => {
+  const result = replaceImageEmbedLinks(
+    "![[photo [2026].png|300]] and ![[other.png]]",
+    "Note-20260723.avif",
+    (target) => target === "photo [2026].png"
+  );
+
+  assert.equal(result.content, "![[Note-20260723.avif|300]] and ![[other.png]]");
+  assert.equal(result.replacementCount, 1);
+});
+
 test("preserves Markdown alt text, path, and title", () => {
   const result = replaceImageEmbedLinks(
     '![Diagram](attachments/image.png "Preview")',
@@ -55,43 +67,33 @@ test("does not replace unrelated image embeds", () => {
 
 test("a link path points to a file at that vault path", () => {
   assert.equal(
-    linkPathPointsTo("Projects/attachments/x.png", "Other/Note.md", "Projects/attachments/x.png", []),
+    linkPathPointsTo("Projects/attachments/x.png", "Other/Note.md", "Projects/attachments/x.png"),
     true
   );
 });
 
 test("a link path points to a file relative to the note's folder", () => {
   assert.equal(
-    linkPathPointsTo("attachments/x.png", "Projects/Plan.md", "Projects/attachments/x.png", []),
+    linkPathPointsTo("attachments/x.png", "Projects/Plan.md", "Projects/attachments/x.png"),
     true
   );
   assert.equal(
-    linkPathPointsTo("../attachments/x.png", "Projects/Plan.md", "attachments/x.png", []),
-    true
-  );
-});
-
-test("a bare file name or partial path points to the only file it ends", () => {
-  const otherFiles = ["Notes/y.png", "Notes/attachments/x.jpg"];
-  assert.equal(linkPathPointsTo("x.png", "Note.md", "Notes/attachments/x.png", otherFiles), true);
-  assert.equal(
-    linkPathPointsTo("attachments/x.png", "Note.md", "Notes/attachments/x.png", otherFiles),
+    linkPathPointsTo("../attachments/x.png", "Projects/Plan.md", "attachments/x.png"),
     true
   );
 });
 
-test("a bare file name or partial path that other files end with points nowhere", () => {
-  const otherFiles = ["Archive/attachments/x.png"];
-  assert.equal(linkPathPointsTo("x.png", "Note.md", "Notes/attachments/x.png", otherFiles), false);
-  assert.equal(
-    linkPathPointsTo("attachments/x.png", "Note.md", "Notes/attachments/x.png", otherFiles),
-    false
-  );
+// Obsidian resolves such a link to another file whose path ends with it, if
+// there is one, before the plugin checks it.
+test("a bare file name or partial path points to a file whose path ends with it", () => {
+  assert.equal(linkPathPointsTo("x.png", "Note.md", "Notes/attachments/x.png"), true);
+  assert.equal(linkPathPointsTo("attachments/x.png", "Note.md", "Notes/attachments/x.png"), true);
 });
 
 test("a link path to another file doesn't point to the file", () => {
-  assert.equal(linkPathPointsTo("y.png", "Notes/Note.md", "Notes/x.png", []), false);
-  assert.equal(linkPathPointsTo("other/x.png", "Notes/Note.md", "Notes/x.png", []), false);
+  assert.equal(linkPathPointsTo("y.png", "Notes/Note.md", "Notes/x.png"), false);
+  assert.equal(linkPathPointsTo("other/x.png", "Notes/Note.md", "Notes/x.png"), false);
+  assert.equal(linkPathPointsTo("x.png", "Notes/Note.md", "Notes/bx.png"), false);
 });
 
 test("a file name is taken by a file of that name in any folder, whatever the case", () => {

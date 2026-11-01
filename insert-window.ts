@@ -29,3 +29,21 @@ export class InsertWindow {
     return now < this.until ? this.notePath : null;
   }
 }
+
+// The parts of a paste's or drop's DataTransfer that show if it brings files.
+export interface TransferContents {
+  items: ArrayLike<{ kind: string }>;
+  getData(format: string): string;
+}
+
+// Only a paste or drop that may add images opens the window. Obsidian saves
+// the files a drop carries.
+export function dropMayAddFiles(data: TransferContents): boolean {
+  return Array.from(data.items).some((item) => item.kind === "file");
+}
+
+// On paste, Obsidian also saves an image or a file from the system clipboard
+// when the paste has no files and no text.
+export function pasteMayAddFiles(data: TransferContents): boolean {
+  return dropMayAddFiles(data) || !data.getData("text/plain");
+}

@@ -33,10 +33,15 @@ function cutToBytes(value: string, maxBytes: number): string {
   return result;
 }
 
+// Variation selectors and enclosing marks, such as the keycap, only change how
+// emoji look. Other marks, such as accents and Hindi vowel signs, are kept.
+const EMOJI_MARKS = /[\p{Me}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/gu;
+
 export function sanitizeFileStem(value: string, replaceSpaces: boolean): string {
   const separator = replaceSpaces ? "_" : " ";
   // Sanitizing never makes the value longer.
   const sanitized = cutToBytes(value, MAX_VALUE_BYTES)
+    .replace(EMOJI_MARKS, "")
     .replace(/[^\p{L}\p{M}\p{N}._-]+/gu, separator)
     .replace(replaceSpaces ? /_+/g : / +/g, separator)
     .replace(/^[._ -]+|[._ -]+$/g, "");

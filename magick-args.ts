@@ -19,6 +19,10 @@ export function buildConvertArgs(
     : [];
 
   return [
+    // Otherwise %d, %o, and %x in the output name are read as placeholders,
+    // and growth%o.avif is written as growth0.avif.
+    "-define",
+    "filename:literal=true",
     inputPath,
     // Rotates the pixels as the EXIF orientation says, so the image stays
     // upright without it: older ImageMagick versions don't carry it over to
@@ -32,8 +36,8 @@ export function buildConvertArgs(
   ];
 }
 
-// "magick identify" exists only in ImageMagick 7, while the info: format also
-// works with ImageMagick 6's convert. Prints the frame count once per frame.
+// "magick identify" exists only in ImageMagick 7, while this also works with
+// ImageMagick 6's convert. -print writes the frame count once, not per frame.
 export function buildFrameCountArgs(inputPath: string): string[] {
-  return ["-ping", inputPath, "-format", "%n\n", "info:"];
+  return ["-ping", inputPath, "-print", "%n\n", "null:"];
 }

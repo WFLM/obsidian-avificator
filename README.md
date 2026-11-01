@@ -141,9 +141,10 @@ the status bar. Modes can still be switched here or with the commands.
 on Linux with Wayland, Obsidian gets only the `file:///` address of an image
 dragged from a file manager and pastes it as text instead of copying the
 image. With this option, the plugin copies such images into the vault itself,
-using Obsidian's attachment folder, so they are converted or renamed. Works in
-**Convert to AVIF** and **Rename only** modes. Holding `Ctrl` (`Option` on
-macOS) while dropping still inserts a link to the original file.
+using Obsidian's attachment folder, and then converts or renames them as set
+under [Input formats](#input-formats). Works in **Convert to AVIF** and
+**Rename only** modes. Holding `Ctrl` (`Option` on macOS) while dropping still
+inserts a link to the original file.
 
 ### File name template
 
@@ -171,8 +172,9 @@ If the template has no `{counter}` and the name is taken, ` 1`, ` 2`, and so on
 is added to the end. Characters that can't be used in file names or links,
 such as `:` or `#`, are replaced with `-`; in the note title and the original
 name, they are replaced like spaces. A long note title or original name is cut
-to 100 bytes (about 50 Cyrillic letters), so the file name fits within the
-limit of the file system.
+to 100 bytes (about 50 Cyrillic letters). This keeps names made from the
+default template, or from a template like it, within the file system's limit
+of 255 bytes.
 
 **Replace spaces with underscores** (on by default) puts `_` in place of every
 space in the name. Turn it off to keep spaces:

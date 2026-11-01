@@ -38,6 +38,11 @@ test("keeps combining marks, as in Hindi or in names from macOS", () => {
   assert.equal(sanitizeFileStem("cafe\u0301 menu", true), "cafe\u0301_menu");
 });
 
+test("drops the invisible parts of emoji along with them", () => {
+  assert.equal(sanitizeFileStem("Ideas ❤️", true), "Ideas");
+  assert.equal(sanitizeFileStem("Plan 1️⃣", true), "Plan_1");
+});
+
 test("cuts long titles and names to 100 bytes, between characters", () => {
   assert.equal(sanitizeFileStem("x".repeat(300), true), "x".repeat(100));
   assert.equal(sanitizeFileStem("Я".repeat(200), true), "Я".repeat(50));

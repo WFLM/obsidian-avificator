@@ -20,13 +20,13 @@ import {
   setTooltip,
   type Debouncer,
 } from "obsidian";
-import { EditorView } from "@codemirror/view";
+import type { EditorView } from "@codemirror/view";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { promisify } from "node:util";
 import { noteClosedMessage, parseFileUriList, vaultRelativePath } from "./dropped-files";
-import { InsertWindow } from "./insert-window";
+import { InsertWindow, dropMayAddFiles, pasteMayAddFiles } from "./insert-window";
 import {
   buildFileStem,
   filterTemplateSuggestions,
@@ -146,12 +146,11 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Obsidian's Editor can't map screen coordinates to text, so ask CodeMirror.
-// It finds its view only from its own elements, not from inside a widget such
-// as an embedded image or a table, so the search starts at the editor.
+// Obsidian's Editor can't map screen coordinates to text, so ask its CodeMirror
+// view. This is the note's view even when a table cell is being edited, and
+// the one the Editor inserts into.
 function moveCursorToDrop(evt: DragEvent, editor: Editor): void {
-  const editorEl = (evt.target as HTMLElement | null)?.closest<HTMLElement>(".cm-editor");
-  const view = editorEl ? EditorView.findFromDOM(editorEl) : null;
+  const view = (editor as Editor & { cm?: EditorView }).cm;
   const offset = view?.posAtCoords({ x: evt.clientX, y: evt.clientY });
   if (offset !== null && offset !== undefined) {
     editor.setCursor(editor.offsetToPos(offset));
@@ -184,9 +183,10 @@ export default class AVIFOnInsertPlugin extends Plugin {
   settings: AVIFPluginSettings = { ...DEFAULT_SETTINGS };
   private readonly noteQueues = new Map<string, Promise<void>>();
   private readonly reservedOutputPaths = new Set<string>();
-  // AVIF files this plugin is writing. AVIF is an input format too, so
-  // without this the plugin would rename its own output.
-  private readonly ownOutputPaths = new Set<string>();
+  // AVIF files this plugin is writing, each with the conversion that writes
+  // it. AVIF is an input format too, so without this the plugin would rename
+  // its own output.
+  private readonly ownOutputPaths = new Map<string, symbol>();
   private readonly insertWindow = new InsertWindow(INSERT_WINDOW_MS, INSERT_WINDOW_MAX_MS);
   private statusBarItem: HTMLElement | null = null;
 
@@ -234,8 +234,10 @@ export default class AVIFOnInsertPlugin extends Plugin {
     }
 
     this.registerEvent(
-      this.app.workspace.on("editor-paste", (_evt, _editor, info) => {
-        if (info.file) this.insertWindow.open(info.file.path, Date.now());
+      this.app.workspace.on("editor-paste", (evt, _editor, info) => {
+        if (info.file && (!evt.clipboardData || pasteMayAddFiles(evt.clipboardData))) {
+          this.insertWindow.open(info.file.path, Date.now());
+        }
       })
     );
     this.registerEvent(
@@ -329,7 +331,9 @@ export default class AVIFOnInsertPlugin extends Plugin {
   ): void {
     const dataTransfer = evt.dataTransfer;
     const note = info.file;
-    if (note) this.insertWindow.open(note.path, Date.now());
+    if (note && dataTransfer && dropMayAddFiles(dataTransfer)) {
+      this.insertWindow.open(note.path, Date.now());
+    }
     if (
       evt.defaultPrevented ||
       !dataTransfer ||
@@ -342,8 +346,10 @@ export default class AVIFOnInsertPlugin extends Plugin {
       return;
     }
 
+    // Images are copied even if their format is unchecked, as Obsidian would
+    // copy them, and then left as they are.
     const filePaths = parseFileUriList(dataTransfer.getData("text/uri-list"));
-    if (!filePaths?.every((filePath) => this.planImage(extname(filePath).slice(1)))) {
+    if (!filePaths?.every((filePath) => formatForExtension(extname(filePath).slice(1)))) {
       return;
     }
 
@@ -414,6 +420,7 @@ export default class AVIFOnInsertPlugin extends Plugin {
 
     let outputTarget: OutputTarget | null = null;
     let linkUpdated = false;
+    const conversion = Symbol(file.path);
 
     try {
       const isLinked = await this.waitForImageLink(sourceNote, file.path);
@@ -426,7 +433,7 @@ export default class AVIFOnInsertPlugin extends Plugin {
       }
 
       outputTarget = await this.reserveOutputTarget(file, sourceNote, "avif", rename);
-      this.ownOutputPaths.add(outputTarget.vaultPath);
+      this.ownOutputPaths.set(outputTarget.vaultPath, conversion);
 
       await execFileAsync(
         this.settings.magickPath,
@@ -479,8 +486,13 @@ export default class AVIFOnInsertPlugin extends Plugin {
         this.reservedOutputPaths.delete(vaultPath);
         // The vault reports the output once ImageMagick creates it, which may
         // be after the conversion ends. If it never does, for example because
-        // the conversion failed, the path is forgotten.
-        window.setTimeout(() => this.ownOutputPaths.delete(vaultPath), OWN_OUTPUT_GRACE_MS);
+        // the conversion failed, the path is forgotten, unless a later
+        // conversion writes to it by then.
+        window.setTimeout(() => {
+          if (this.ownOutputPaths.get(vaultPath) === conversion) {
+            this.ownOutputPaths.delete(vaultPath);
+          }
+        }, OWN_OUTPUT_GRACE_MS);
       }
     }
   }
@@ -497,7 +509,9 @@ export default class AVIFOnInsertPlugin extends Plugin {
       const { stdout } = await execFileAsync(
         this.settings.magickPath,
         buildFrameCountArgs(adapter.getFullPath(file.path)),
-        { timeout: MAGICK_CHECK_TIMEOUT_MS, windowsHide: true }
+        // Some formats are read in full even with -ping, so this may take as
+        // long as the conversion.
+        { timeout: CONVERSION_TIMEOUT_MS, windowsHide: true }
       );
       frameCount = parseFrameCount(stdout) ?? 1;
     } catch (error: unknown) {
@@ -569,8 +583,10 @@ export default class AVIFOnInsertPlugin extends Plugin {
         sourceNote,
         file.extension.toLowerCase()
       );
-      // The template gives the name the image already has.
-      if (outputTarget.vaultPath === originalPath) return;
+      // The template gives the name the image already has, or one that
+      // differs only in case. Links ignore case, so they would still point to
+      // the image and couldn't be told apart from links to the new name.
+      if (outputTarget.vaultPath.toLowerCase() === originalPath.toLowerCase()) return;
       await this.app.vault.rename(file, outputTarget.vaultPath);
       renamed = true;
 
@@ -710,10 +726,8 @@ export default class AVIFOnInsertPlugin extends Plugin {
     originalPath: string,
     outputFileName: string
   ): LinkReplacementResult {
-    return replaceImageEmbedLinks(
-      content,
-      outputFileName,
-      (target) => this.linkResolvesToPath(target, note, originalPath)
+    return replaceImageEmbedLinks(content, outputFileName, (target) =>
+      this.linkResolvesToPath(target, note, originalPath)
     );
   }
 
@@ -729,12 +743,7 @@ export default class AVIFOnInsertPlugin extends Plugin {
     if (destination) {
       return destination.path === filePath;
     }
-    return linkPathPointsTo(
-      linkPath,
-      note.path,
-      filePath,
-      this.app.vault.getFiles().map((candidate) => candidate.path)
-    );
+    return linkPathPointsTo(linkPath, note.path, filePath);
   }
 
   private decodeLinkTarget(target: string): string {

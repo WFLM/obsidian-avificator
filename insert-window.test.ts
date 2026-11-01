@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { InsertWindow } from "./insert-window";
+import { InsertWindow, dropMayAddFiles, pasteMayAddFiles } from "./insert-window";
 
 test("knows of no note before anything is pasted or dropped", () => {
   assert.equal(new InsertWindow(10_000, 60_000).notePathAt(0), null);
@@ -36,4 +36,24 @@ test("starts the limit over with each paste or drop", () => {
   window.extend(20_000);
   assert.equal(window.notePathAt(26_999), "a.md");
   assert.equal(window.notePathAt(27_000), null);
+});
+
+function transfer(kinds: string[], text: string) {
+  return {
+    items: kinds.map((kind) => ({ kind })),
+    getData: (format: string) => (format === "text/plain" ? text : ""),
+  };
+}
+
+test("a drop may add files only if it carries some", () => {
+  assert.equal(dropMayAddFiles(transfer(["string", "file"], "a.png")), true);
+  assert.equal(dropMayAddFiles(transfer(["string"], "some text")), false);
+});
+
+test("a paste may add files if it carries some or has no text", () => {
+  assert.equal(pasteMayAddFiles(transfer(["file"], "")), true);
+  assert.equal(pasteMayAddFiles(transfer(["string", "file"], "image")), true);
+  // Obsidian then takes an image or a file from the system clipboard.
+  assert.equal(pasteMayAddFiles(transfer([], "")), true);
+  assert.equal(pasteMayAddFiles(transfer(["string"], "some text")), false);
 });

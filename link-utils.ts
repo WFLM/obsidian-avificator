@@ -5,7 +5,8 @@ export interface LinkReplacementResult {
 
 type LinkTargetMatcher = (target: string) => boolean;
 
-const WIKI_IMAGE_EMBED_PATTERN = /!\[\[([^\]\n]+)\]\]/g;
+// A single "]" may be part of the file name; "]]" ends the embed.
+const WIKI_IMAGE_EMBED_PATTERN = /!\[\[((?:[^\]\n]|\](?!\]))+)\]\]/g;
 const MARKDOWN_IMAGE_EMBED_PATTERN =
   /!\[([^\]\n]*)\]\((<[^>\n]+>|(?:\\.|[^)\s])+)([ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?\)/g;
 
@@ -58,22 +59,13 @@ export function replaceImageEmbedLinks(
 
 // For a file that is no longer at filePath, so Obsidian can't resolve links to
 // it: whether the link path is its vault path, its path relative to the note's
-// folder, or the end of its path, such as a bare file name, that no other file
-// in the vault shares.
-export function linkPathPointsTo(
-  linkPath: string,
-  notePath: string,
-  filePath: string,
-  vaultPaths: readonly string[]
-): boolean {
-  if (linkPath === filePath) return true;
-  if (resolveFromFolder(notePath, linkPath) === filePath) return true;
-
-  const endsWithLinkPath = (path: string): boolean =>
-    path === linkPath || path.endsWith(`/${linkPath}`);
+// folder, or the end of its path, such as a bare file name. Obsidian has
+// already checked that no other file's path ends with it.
+export function linkPathPointsTo(linkPath: string, notePath: string, filePath: string): boolean {
   return (
-    endsWithLinkPath(filePath) &&
-    !vaultPaths.some((path) => path !== filePath && endsWithLinkPath(path))
+    linkPath === filePath ||
+    resolveFromFolder(notePath, linkPath) === filePath ||
+    filePath.endsWith(`/${linkPath}`)
   );
 }
 
