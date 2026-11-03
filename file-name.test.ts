@@ -124,6 +124,12 @@ test("finds variables the template doesn't support", () => {
   );
 });
 
+test("takes a variable without its closing brace for an unknown one", () => {
+  assert.equal(findUnknownVariable("{titl"), "{titl");
+  assert.equal(findUnknownVariable("{title}-{date:YYYY"), "{date:YYYY");
+  assert.equal(findUnknownVariable("{a{title}"), "{a");
+});
+
 test("finds the variable being typed before the cursor", () => {
   assert.deepEqual(findPartialVariable("{title}-{da", 11), { start: 8, query: "da" });
   assert.deepEqual(findPartialVariable("{title", 6), { start: 0, query: "title" });

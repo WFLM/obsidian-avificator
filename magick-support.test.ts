@@ -109,15 +109,15 @@ test("reports other errors with the first line of their message", () => {
   ]);
 });
 
-test("reads the frame count from identify output", () => {
-  assert.equal(parseFrameCount("3\n3\n3\n"), 3);
+test("reads the frame count ImageMagick prints", () => {
+  assert.equal(parseFrameCount("3\n"), 3);
   assert.equal(parseFrameCount("1\n"), 1);
   assert.equal(parseFrameCount(""), null);
-  assert.equal(parseFrameCount("identify: no decode delegate\n"), null);
+  assert.equal(parseFrameCount("magick: no decode delegate\n"), null);
 });
 
 test("takes an error ImageMagick itself reports for a read error", () => {
-  const exited = Object.assign(new Error("Command failed: magick identify"), {
+  const exited = Object.assign(new Error("Command failed: magick -ping"), {
     code: 1,
     killed: false,
     signal: null,

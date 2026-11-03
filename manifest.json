@@ -2,7 +2,7 @@
   "id": "avificator",
   "name": "AVIFicator",
   "version": "0.1.0",
-  "minAppVersion": "1.6.6",
+  "minAppVersion": "1.13.0",
   "description": "Convert images you add to notes to AVIF with ImageMagick, and rename them using a template based on the note title and date.",
   "author": "WFLM",
   "authorUrl": "https://github.com/wflm",

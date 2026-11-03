@@ -3,12 +3,16 @@ export interface LinkReplacementResult {
   replacementCount: number;
 }
 
+// Gets a link target as Obsidian reads it, see decodeMarkdownTarget.
 type LinkTargetMatcher = (target: string) => boolean;
 
 // A single "]" may be part of the file name; "]]" ends the embed.
 const WIKI_IMAGE_EMBED_PATTERN = /!\[\[((?:[^\]\n]|\](?!\]))+)\]\]/g;
+// The target may have balanced parentheses, which Obsidian doesn't encode. A
+// backslash always escapes the next character: matching it on its own too
+// would make an unclosed link with many backslashes take exponential time.
 const MARKDOWN_IMAGE_EMBED_PATTERN =
-  /!\[([^\]\n]*)\]\((<[^>\n]+>|(?:\\.|[^)\s])+)([ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?\)/g;
+  /!\[([^\]\n]*)\]\((<[^>\n]+>|(?:\\.|[^()\s\\]|\((?:\\.|[^()\s\\])*\))+)([ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?\)/g;
 
 export function replaceImageEmbedLinks(
   content: string,
@@ -42,7 +46,7 @@ export function replaceImageEmbedLinks(
       const isEnclosed = rawTarget.startsWith("<") && rawTarget.endsWith(">");
       const target = isEnclosed ? rawTarget.slice(1, -1) : rawTarget;
 
-      if (!isOriginalTarget(target)) return fullMatch;
+      if (!isOriginalTarget(decodeMarkdownTarget(target))) return fullMatch;
 
       replacementCount += 1;
       const replacementTarget = replaceTargetBasename(target, outputFileName, true);
@@ -57,16 +61,28 @@ export function replaceImageEmbedLinks(
   };
 }
 
-// For a file that is no longer at filePath, so Obsidian can't resolve links to
-// it: whether the link path is its vault path, its path relative to the note's
-// folder, or the end of its path, such as a bare file name. Obsidian has
-// already checked that no other file's path ends with it.
-export function linkPathPointsTo(linkPath: string, notePath: string, filePath: string): boolean {
-  return (
-    linkPath === filePath ||
-    resolveFromFolder(notePath, linkPath) === filePath ||
-    filePath.endsWith(`/${linkPath}`)
-  );
+// The targets of the image embeds the matcher accepts, as it gets them.
+export function findImageEmbedTargets(
+  content: string,
+  isTarget: LinkTargetMatcher
+): Set<string> {
+  const targets = new Set<string>();
+  replaceImageEmbedLinks(content, "", (target) => {
+    if (isTarget(target)) targets.add(target);
+    return false;
+  });
+  return targets;
+}
+
+// Obsidian decodes the targets of Markdown links, but not of wiki links, and
+// keeps a target it can't decode as it is. decodeURI leaves "%23" and other
+// reserved characters encoded, so they stay part of the name.
+function decodeMarkdownTarget(target: string): string {
+  try {
+    return decodeURI(target);
+  } catch {
+    return target;
+  }
 }
 
 // Links by bare name ignore case and folders, so a name used anywhere in the
@@ -76,15 +92,6 @@ export function isFileNameTaken(fileName: string, vaultPaths: readonly string[])
   return vaultPaths.some(
     (path) => path.slice(path.lastIndexOf("/") + 1).toLowerCase() === lowerCased
   );
-}
-
-function resolveFromFolder(notePath: string, linkPath: string): string {
-  const segments = notePath.split("/").slice(0, -1);
-  for (const segment of linkPath.split("/")) {
-    if (segment === "..") segments.pop();
-    else if (segment !== "." && segment !== "") segments.push(segment);
-  }
-  return segments.join("/");
 }
 
 function replaceTrimmedTarget(
@@ -108,7 +115,8 @@ function replaceTargetBasename(
   outputFileName: string,
   encodeOutput: boolean
 ): string {
-  const subpathIndex = target.search(/[?#]/);
+  // As in Obsidian, a subpath starts only at "#"; "?" is part of the name.
+  const subpathIndex = target.indexOf("#");
   const path = subpathIndex === -1 ? target : target.slice(0, subpathIndex);
   const subpath = subpathIndex === -1 ? "" : target.slice(subpathIndex);
   const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));

@@ -1,6 +1,10 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { noteClosedMessage, parseFileUriList, vaultRelativePath } from "./dropped-files";
+import {
+  dropInsertsAddresses,
+  parseFileUriList,
+  vaultRelativePath,
+} from "./dropped-files";
 
 test("turns dropped file URIs into paths", () => {
   assert.deepEqual(
@@ -35,17 +39,18 @@ test("treats files outside the vault as outside", () => {
   assert.equal(vaultRelativePath("/vault", "/vault"), null);
 });
 
-test("says which dropped image wasn't linked when the note was closed", () => {
-  assert.equal(noteClosedMessage("Plan", "a.png", 0), "Plan is no longer open, so a.png wasn't linked");
+const URI = "file:///home/user/Pictures/Screenshot%20from%202026.png";
+
+test("Obsidian inserts dropped addresses as text without plain text or with other text", () => {
+  assert.equal(dropInsertsAddresses(URI, ""), true);
+  assert.equal(dropInsertsAddresses(URI, "Screenshot from 2026"), true);
 });
 
-test("also counts the dropped images that weren't copied", () => {
+test("Obsidian copies dropped files itself when the plain text is their address", () => {
+  assert.equal(dropInsertsAddresses(URI, URI), false);
   assert.equal(
-    noteClosedMessage("Plan", "a.png", 1),
-    "Plan is no longer open, so a.png wasn't linked, and 1 more image wasn't copied"
+    dropInsertsAddresses(URI, "file:///home/user/Pictures/Screenshot from 2026.png"),
+    false
   );
-  assert.equal(
-    noteClosedMessage("Plan", "a.png", 3),
-    "Plan is no longer open, so a.png wasn't linked, and 3 more images weren't copied"
-  );
+  assert.equal(dropInsertsAddresses(URI, URI.toUpperCase()), false);
 });

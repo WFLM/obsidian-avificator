@@ -1,6 +1,10 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { isFileNameTaken, linkPathPointsTo, replaceImageEmbedLinks } from "./link-utils";
+import {
+  findImageEmbedTargets,
+  isFileNameTaken,
+  replaceImageEmbedLinks,
+} from "./link-utils";
 
 const matchesOriginal = (target: string): boolean =>
   target === "image.png" || target === "attachments/image.png";
@@ -39,6 +43,21 @@ test("replaces a wiki embed with a bracket in the file name", () => {
   assert.equal(result.replacementCount, 1);
 });
 
+// Obsidian starts a subpath only at "#" and keeps "?" in attachment names.
+test("keeps a question mark in the file name and a heading after it", () => {
+  const result = replaceImageEmbedLinks(
+    "![[Why?.png]] ![](Why%3F.png) ![[Why?.png#^block]]",
+    "Note-20260723.avif",
+    (target) => target === "Why?.png" || target === "Why%3F.png" || target === "Why?.png#^block"
+  );
+
+  assert.equal(
+    result.content,
+    "![[Note-20260723.avif]] ![](Note-20260723.avif) ![[Note-20260723.avif#^block]]"
+  );
+  assert.equal(result.replacementCount, 3);
+});
+
 test("preserves Markdown alt text, path, and title", () => {
   const result = replaceImageEmbedLinks(
     '![Diagram](attachments/image.png "Preview")',
@@ -53,6 +72,36 @@ test("preserves Markdown alt text, path, and title", () => {
   assert.equal(result.replacementCount, 1);
 });
 
+// A backslash could be matched two ways, which made the time double with
+// each one in an unclosed link.
+test("skips an unclosed Markdown link with many backslashes quickly", () => {
+  const content = `![](C:${"\\a".repeat(26)} `;
+  const start = Date.now();
+  const result = replaceImageEmbedLinks(content, "Note-20260723.avif", () => true);
+
+  assert.ok(Date.now() - start < 200);
+  assert.equal(result.replacementCount, 0);
+});
+
+test("finds a Markdown link target with escaped parentheses", () => {
+  assert.deepEqual(
+    [...findImageEmbedTargets("![](a\\(b\\).png)", () => true)],
+    ["a\\(b\\).png"]
+  );
+});
+
+// Obsidian leaves parentheses unencoded in the Markdown links it inserts.
+test("replaces a Markdown embed with parentheses in the file name", () => {
+  const result = replaceImageEmbedLinks(
+    '![](image%20(1).png) ![](a(1).png "Title")',
+    "Note-20260723.avif",
+    (target) => target === "image (1).png" || target === "a(1).png"
+  );
+
+  assert.equal(result.content, '![](Note-20260723.avif) ![](Note-20260723.avif "Title")');
+  assert.equal(result.replacementCount, 2);
+});
+
 test("does not replace unrelated image embeds", () => {
   const content = "![[other.png]]\n![Other](attachments/other.png)";
   const result = replaceImageEmbedLinks(
@@ -65,35 +114,25 @@ test("does not replace unrelated image embeds", () => {
   assert.equal(result.replacementCount, 0);
 });
 
-test("a link path points to a file at that vault path", () => {
-  assert.equal(
-    linkPathPointsTo("Projects/attachments/x.png", "Other/Note.md", "Projects/attachments/x.png"),
-    true
+// Obsidian decodes Markdown link targets with decodeURI, keeping a target it
+// can't decode as it is, and takes wiki link targets as they are.
+test("gives link targets as Obsidian reads them", () => {
+  const content = "![](photo%201.png) ![[photo%201.png]] ![](100%.png) ![](<a%20b.png>)";
+
+  assert.deepEqual(
+    [...findImageEmbedTargets(content, () => true)],
+    ["photo%201.png", "photo 1.png", "100%.png", "a b.png"]
   );
 });
 
-test("a link path points to a file relative to the note's folder", () => {
-  assert.equal(
-    linkPathPointsTo("attachments/x.png", "Projects/Plan.md", "Projects/attachments/x.png"),
-    true
-  );
-  assert.equal(
-    linkPathPointsTo("../attachments/x.png", "Projects/Plan.md", "attachments/x.png"),
-    true
-  );
-});
+test("finds the targets of the embeds that point to the image, each once", () => {
+  const content =
+    "![[ image.png |300]] ![](attachments/image.png) ![[other.png]] ![[image.png]]";
 
-// Obsidian resolves such a link to another file whose path ends with it, if
-// there is one, before the plugin checks it.
-test("a bare file name or partial path points to a file whose path ends with it", () => {
-  assert.equal(linkPathPointsTo("x.png", "Note.md", "Notes/attachments/x.png"), true);
-  assert.equal(linkPathPointsTo("attachments/x.png", "Note.md", "Notes/attachments/x.png"), true);
-});
-
-test("a link path to another file doesn't point to the file", () => {
-  assert.equal(linkPathPointsTo("y.png", "Notes/Note.md", "Notes/x.png"), false);
-  assert.equal(linkPathPointsTo("other/x.png", "Notes/Note.md", "Notes/x.png"), false);
-  assert.equal(linkPathPointsTo("x.png", "Notes/Note.md", "Notes/bx.png"), false);
+  assert.deepEqual(
+    [...findImageEmbedTargets(content, matchesOriginal)],
+    ["image.png", "attachments/image.png"]
+  );
 });
 
 test("a file name is taken by a file of that name in any folder, whatever the case", () => {

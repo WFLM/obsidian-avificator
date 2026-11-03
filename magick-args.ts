@@ -19,7 +19,7 @@ export function buildConvertArgs(
     : [];
 
   return [
-    // Otherwise %d, %o, and %x in the output name are read as placeholders,
+    // Otherwise %d, %o, and %x in the output path are read as placeholders,
     // and growth%o.avif is written as growth0.avif.
     "-define",
     "filename:literal=true",

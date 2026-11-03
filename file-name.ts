@@ -79,10 +79,17 @@ export function keepFileStem(stem: string, attempt: number): string {
   return attempt > 0 ? `${stem} ${attempt}` : stem;
 }
 
+// A "{" without its "}" counts too, so that a variable left half-typed isn't
+// saved and put into file names as is.
+const VARIABLE_OR_UNCLOSED_PATTERN = /\{([^{}]*)(\})?/g;
+
 export function findUnknownVariable(template: string): string | null {
-  for (const [variable, name = ""] of template.matchAll(VARIABLE_PATTERN)) {
+  for (const [variable, name = "", closing] of template.matchAll(
+    VARIABLE_OR_UNCLOSED_PATTERN
+  )) {
     const isKnown =
-      ["title", "original", "counter", "date"].includes(name) || name.startsWith("date:");
+      closing !== undefined &&
+      (["title", "original", "counter", "date"].includes(name) || name.startsWith("date:"));
     if (!isKnown) return variable;
   }
   return null;

@@ -22,7 +22,7 @@ command), and renames them, as well as AVIF images, using a template.
 
 ## Installation
 
-The plugin requires Obsidian Desktop 1.6.6 or newer.
+The plugin requires Obsidian Desktop 1.13.0 or newer.
 
 ### 1. Install ImageMagick
 

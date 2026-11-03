@@ -1,6 +1,11 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { effectiveActions, parseSettings, validateMaxImageSize } from "./settings";
+import {
+  effectiveActions,
+  normalizeMagickPath,
+  parseSettings,
+  validateMaxImageSize,
+} from "./settings";
 
 const BOTH = { rename: true, convert: true };
 const RENAME_ONLY = { rename: true, convert: false };
@@ -72,6 +77,16 @@ test("keeps valid stored settings and trims the ImageMagick path", () => {
   assert.equal(parseSettings({ mode: "off" }).mode, "off");
 });
 
+// Windows Explorer's "Copy as path" puts the path in quotes.
+test("removes the quotes around a pasted ImageMagick path", () => {
+  assert.equal(
+    normalizeMagickPath(' "C:\\Program Files\\ImageMagick\\magick.exe" '),
+    "C:\\Program Files\\ImageMagick\\magick.exe"
+  );
+  assert.equal(normalizeMagickPath("'/opt/homebrew/bin/magick'"), "/opt/homebrew/bin/magick");
+  assert.equal(normalizeMagickPath('""'), "magick");
+});
+
 test("falls back to defaults for invalid stored values", () => {
   assert.deepEqual(
     parseSettings({
@@ -121,17 +136,9 @@ test("enables formats and actions missing from stored settings", () => {
   );
 });
 
-test("turns formats switched on or off in older settings into both actions or none", () => {
-  assert.deepEqual(parseSettings({ formats: { PNG: false, GIF: true } }).formats, {
-    ...ALL_FORMATS,
-    PNG: NONE,
-  });
-});
-
 test("never converts AVIF, whatever is stored", () => {
   assert.deepEqual(parseSettings({ formats: { AVIF: BOTH } }).formats.AVIF, RENAME_ONLY);
-  assert.deepEqual(parseSettings({ formats: { AVIF: true } }).formats.AVIF, RENAME_ONLY);
-  assert.deepEqual(parseSettings({ formats: { AVIF: false } }).formats.AVIF, NONE);
+  assert.deepEqual(parseSettings({ formats: { AVIF: CONVERT_ONLY } }).formats.AVIF, NONE);
 });
 
 test("follows the format actions in Convert mode", () => {

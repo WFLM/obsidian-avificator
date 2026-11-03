@@ -37,9 +37,12 @@ export interface TransferContents {
 }
 
 // Only a paste or drop that may add images opens the window. Obsidian saves
-// the files a drop carries.
+// the files a drop carries, and PNG and JPEG images embedded in its HTML.
 export function dropMayAddFiles(data: TransferContents): boolean {
-  return Array.from(data.items).some((item) => item.kind === "file");
+  return (
+    Array.from(data.items).some((item) => item.kind === "file") ||
+    data.getData("text/html").includes("data:image/")
+  );
 }
 
 // On paste, Obsidian also saves an image or a file from the system clipboard

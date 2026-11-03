@@ -58,14 +58,14 @@ export function describeMagickSupport(
   return lines;
 }
 
-// `magick identify -format "%n\n"` prints the frame count once per frame.
+// Reads the frame count that buildFrameCountArgs makes ImageMagick print.
 export function parseFrameCount(output: string): number | null {
-  const count = Number.parseInt(output.split("\n")[0] ?? "", 10);
+  const count = Number.parseInt(output, 10);
   return Number.isNaN(count) ? null : count;
 }
 
-// ImageMagick ran and exited with an error, which for identify means it
-// couldn't read the image. A missing or unrunnable program has a string code
+// ImageMagick ran and exited with an error, which when counting frames means
+// it couldn't read the image. A missing or unrunnable program has a string code
 // such as ENOENT, and a timed out one has none.
 export function isMagickReadError(error: unknown): boolean {
   return error instanceof Error && "code" in error && typeof error.code === "number";

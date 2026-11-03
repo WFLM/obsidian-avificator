@@ -38,10 +38,11 @@ test("starts the limit over with each paste or drop", () => {
   assert.equal(window.notePathAt(27_000), null);
 });
 
-function transfer(kinds: string[], text: string) {
+function transfer(kinds: string[], text: string, html = "") {
+  const data: Record<string, string> = { "text/plain": text, "text/html": html };
   return {
     items: kinds.map((kind) => ({ kind })),
-    getData: (format: string) => (format === "text/plain" ? text : ""),
+    getData: (format: string) => data[format] ?? "",
   };
 }
 
@@ -56,4 +57,15 @@ test("a paste may add files if it carries some or has no text", () => {
   // Obsidian then takes an image or a file from the system clipboard.
   assert.equal(pasteMayAddFiles(transfer([], "")), true);
   assert.equal(pasteMayAddFiles(transfer(["string"], "some text")), false);
+});
+
+// Obsidian saves PNG and JPEG images embedded in pasted or dropped HTML.
+test("a paste or drop may add files if its HTML has embedded images", () => {
+  const html = '<p>Chart</p><img src="data:image/png;base64,iVBORw0KGgo=">';
+  assert.equal(pasteMayAddFiles(transfer(["string", "string"], "Chart", html)), true);
+  assert.equal(dropMayAddFiles(transfer(["string", "string"], "Chart", html)), true);
+  assert.equal(
+    pasteMayAddFiles(transfer(["string", "string"], "Chart", "<p>Chart</p>")),
+    false
+  );
 });

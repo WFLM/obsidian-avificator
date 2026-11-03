@@ -97,7 +97,10 @@ function parseFileNameTemplate(value: unknown): string {
 }
 
 export function normalizeMagickPath(value: unknown): string {
-  const trimmed = typeof value === "string" ? value.trim() : "";
+  // Paths copied from a file manager, such as with "Copy as path" in Windows
+  // Explorer, may come in quotes.
+  const trimmed =
+    typeof value === "string" ? value.trim().replace(/^(["'])(.*)\1$/, "$2").trim() : "";
   return trimmed || DEFAULT_SETTINGS.magickPath;
 }
 
@@ -141,9 +144,8 @@ export function parseSettings(storedData: unknown): AVIFPluginSettings {
   };
 }
 
-// Formats and actions missing from older settings, or added in newer
-// versions, are on. Older settings had one switch per format, which now turns
-// both actions on or off.
+// Formats and actions missing from stored settings, or added in newer
+// versions, are on.
 function parseFormats(storedFormats: unknown): Record<ImageFormat, FormatActions> {
   const formats = allFormatActions();
   if (typeof storedFormats !== "object" || storedFormats === null) return formats;
@@ -151,9 +153,7 @@ function parseFormats(storedFormats: unknown): Record<ImageFormat, FormatActions
   const stored = storedFormats as Record<string, unknown>;
   for (const format of IMAGE_FORMATS) {
     const value = stored[format];
-    if (typeof value === "boolean") {
-      formats[format] = { rename: value, convert: value };
-    } else if (typeof value === "object" && value !== null) {
+    if (typeof value === "object" && value !== null) {
       const actions = value as Record<string, unknown>;
       if (typeof actions.rename === "boolean") formats[format].rename = actions.rename;
       if (typeof actions.convert === "boolean") formats[format].convert = actions.convert;

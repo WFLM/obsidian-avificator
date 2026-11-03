@@ -22,10 +22,16 @@ import {
 } from "obsidian";
 import type { EditorView } from "@codemirror/view";
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { basename, extname } from "node:path";
+import { randomUUID } from "node:crypto";
+import { readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, extname, join } from "node:path";
 import { promisify } from "node:util";
-import { noteClosedMessage, parseFileUriList, vaultRelativePath } from "./dropped-files";
+import {
+  dropInsertsAddresses,
+  parseFileUriList,
+  vaultRelativePath,
+} from "./dropped-files";
 import { InsertWindow, dropMayAddFiles, pasteMayAddFiles } from "./insert-window";
 import {
   buildFileStem,
@@ -38,12 +44,7 @@ import {
   type FileNameValues,
   type TemplateSuggestion,
 } from "./file-name";
-import {
-  isFileNameTaken,
-  linkPathPointsTo,
-  replaceImageEmbedLinks,
-  type LinkReplacementResult,
-} from "./link-utils";
+import { findImageEmbedTargets, isFileNameTaken, replaceImageEmbedLinks } from "./link-utils";
 import {
   FORMAT_EXTENSIONS,
   IMAGE_FORMATS,
@@ -86,16 +87,15 @@ const CONVERSION_TIMEOUT_MS = 120_000;
 const MAGICK_CHECK_TIMEOUT_MS = 10_000;
 const MAGICK_CHECK_DELAY_MS = 500;
 const MOMENT_FORMAT_URL = "https://momentjs.com/docs/#/displaying/format/";
-const LINK_RETRY_COUNT = 10;
+// Obsidian inserts the link to a new image just after saving the image, so
+// it shows up in the note quickly. The wait leaves time for a slow disk.
+const LINK_RETRY_COUNT = 20;
 const LINK_RETRY_DELAY_MS = 250;
 // How long after a paste or drop new images are taken for the pasted or
 // dropped ones. Each such image starts the wait over, so that saving many
 // dropped images can take longer, but only up to the maximum.
 const INSERT_WINDOW_MS = 10_000;
 const INSERT_WINDOW_MAX_MS = 60_000;
-// How long after a conversion ends its output is still not taken for a new
-// image, in case the vault reports it late.
-const OWN_OUTPUT_GRACE_MS = 30_000;
 
 // Only these formats are checked against ImageMagick: AVIF images are only
 // renamed and never read by it.
@@ -148,13 +148,13 @@ function wait(ms: number): Promise<void> {
 
 // Obsidian's Editor can't map screen coordinates to text, so ask its CodeMirror
 // view. This is the note's view even when a table cell is being edited, and
-// the one the Editor inserts into.
+// the one the Editor inserts into. Like CodeMirror's own drop handling, take
+// the nearest position, so the link never replaces selected text instead.
 function moveCursorToDrop(evt: DragEvent, editor: Editor): void {
   const view = (editor as Editor & { cm?: EditorView }).cm;
-  const offset = view?.posAtCoords({ x: evt.clientX, y: evt.clientY });
-  if (offset !== null && offset !== undefined) {
-    editor.setCursor(editor.offsetToPos(offset));
-  }
+  if (!view) return;
+  const offset = view.posAtCoords({ x: evt.clientX, y: evt.clientY }, false);
+  editor.setCursor(editor.offsetToPos(offset));
 }
 
 // Obsidian types moment as a namespace, which TypeScript 7 won't call, but at
@@ -183,10 +183,6 @@ export default class AVIFOnInsertPlugin extends Plugin {
   settings: AVIFPluginSettings = { ...DEFAULT_SETTINGS };
   private readonly noteQueues = new Map<string, Promise<void>>();
   private readonly reservedOutputPaths = new Set<string>();
-  // AVIF files this plugin is writing, each with the conversion that writes
-  // it. AVIF is an input format too, so without this the plugin would rename
-  // its own output.
-  private readonly ownOutputPaths = new Map<string, symbol>();
   private readonly insertWindow = new InsertWindow(INSERT_WINDOW_MS, INSERT_WINDOW_MAX_MS);
   private statusBarItem: HTMLElement | null = null;
 
@@ -286,7 +282,10 @@ export default class AVIFOnInsertPlugin extends Plugin {
 
   private async handleCreatedFile(file: TAbstractFile): Promise<void> {
     if (!(file instanceof TFile)) return;
-    if (this.ownOutputPaths.delete(file.path)) return;
+    // The plugin adds its AVIF files to the vault while their names are
+    // reserved. AVIF is an input format too, so without this the plugin would
+    // rename its own output.
+    if (this.reservedOutputPaths.has(file.path)) return;
     // The mode is read when the image arrives, so switching modes doesn't
     // affect images that are already queued.
     const plan = this.planImage(file.extension);
@@ -318,12 +317,10 @@ export default class AVIFOnInsertPlugin extends Plugin {
     return actions.rename || actions.convert ? { format, actions } : null;
   }
 
-  // When a drop carries file:/// addresses, as drags from a file manager do on
-  // Linux with Wayland, Obsidian inserts them as text, or as a Markdown link
-  // if the drop has other plain text, instead of copying the files, even if
-  // the files come with them. Such images are copied into the vault here
-  // instead. Obsidian copies them itself only if the plain text is the address,
-  // and the result of copying them here is the same.
+  // Drags from a file manager carry file:/// addresses, and sometimes, as on
+  // Linux with Wayland, Obsidian inserts them as text instead of copying the
+  // files, even if the files come with them. Only then are the images copied
+  // into the vault here.
   private handleEditorDrop(
     evt: DragEvent,
     editor: Editor,
@@ -346,9 +343,11 @@ export default class AVIFOnInsertPlugin extends Plugin {
       return;
     }
 
+    const uriList = dataTransfer.getData("text/uri-list");
+    if (!dropInsertsAddresses(uriList, dataTransfer.getData("text/plain"))) return;
     // Images are copied even if their format is unchecked, as Obsidian would
     // copy them, and then left as they are.
-    const filePaths = parseFileUriList(dataTransfer.getData("text/uri-list"));
+    const filePaths = parseFileUriList(uriList);
     if (!filePaths?.every((filePath) => formatForExtension(extname(filePath).slice(1)))) {
       return;
     }
@@ -369,15 +368,17 @@ export default class AVIFOnInsertPlugin extends Plugin {
 
     for (const [index, filePath] of filePaths.entries()) {
       try {
-        const file = await this.importDroppedImage(adapter, filePath, note);
+        const file = await this.importDroppedImage(adapter, filePath, info, note);
         // Copying takes a moment, and the editor may show another note by now.
-        if (info.file !== note) {
-          const skippedCount = filePaths.length - index - 1;
-          new Notice(noteClosedMessage(note.basename, file.name, skippedCount));
+        if (!file || info.file !== note) {
+          new Notice(
+            `${note.basename} is no longer open, so the dropped images weren't added to it`
+          );
           return;
         }
         const link = this.app.fileManager.generateMarkdownLink(file, note.path);
-        const separator = index < filePaths.length - 1 ? "\n" : "";
+        // Obsidian puts a blank line between dropped files.
+        const separator = index < filePaths.length - 1 ? "\n\n" : "";
         editor.replaceSelection(`!${link}${separator}`);
       } catch (error: unknown) {
         console.error("Could not copy the dropped image", { error, filePath });
@@ -387,11 +388,14 @@ export default class AVIFOnInsertPlugin extends Plugin {
   }
 
   // An image that is already in the vault is only linked, as Obsidian does.
+  // If the editor shows another note once the image is copied, the copy is
+  // removed, so that none is left without a link, and null is returned.
   private async importDroppedImage(
     adapter: FileSystemAdapter,
     filePath: string,
+    info: MarkdownView | MarkdownFileInfo,
     note: TFile
-  ): Promise<TFile> {
+  ): Promise<TFile | null> {
     const vaultPath = vaultRelativePath(adapter.getBasePath(), filePath);
     const existing = vaultPath === null ? null : this.app.vault.getAbstractFileByPath(vaultPath);
     if (existing instanceof TFile) return existing;
@@ -403,7 +407,10 @@ export default class AVIFOnInsertPlugin extends Plugin {
     );
     // Reading a large or remote file may outlast the wait started by the drop.
     this.insertWindow.open(note.path, Date.now());
-    return this.app.vault.createBinary(attachmentPath, new Uint8Array(data).buffer);
+    const copy = await this.app.vault.createBinary(attachmentPath, new Uint8Array(data).buffer);
+    if (info.file === note) return copy;
+    await this.app.vault.delete(copy);
+    return null;
   }
 
   private async convertLinkedImage(
@@ -419,12 +426,12 @@ export default class AVIFOnInsertPlugin extends Plugin {
     }
 
     let outputTarget: OutputTarget | null = null;
+    let outputFile: TFile | null = null;
     let linkUpdated = false;
-    const conversion = Symbol(file.path);
 
     try {
-      const isLinked = await this.waitForImageLink(sourceNote, file.path);
-      if (!isLinked) return;
+      const linkTargets = await this.waitForImageLinks(sourceNote, file.path);
+      if (!linkTargets) return;
 
       const obstacle = await this.findConversionObstacle(adapter, file, format);
       if (obstacle) {
@@ -433,32 +440,19 @@ export default class AVIFOnInsertPlugin extends Plugin {
       }
 
       outputTarget = await this.reserveOutputTarget(file, sourceNote, "avif", rename);
-      this.ownOutputPaths.set(outputTarget.vaultPath, conversion);
-
-      await execFileAsync(
-        this.settings.magickPath,
-        buildConvertArgs(
-          adapter.getFullPath(file.path),
-          adapter.getFullPath(outputTarget.vaultPath),
-          this.settings
-        ),
-        {
-          timeout: CONVERSION_TIMEOUT_MS,
-          windowsHide: true,
-        }
+      outputFile = await this.createAvif(
+        adapter.getFullPath(file.path),
+        outputTarget.vaultPath
       );
 
-      if (!(await adapter.exists(outputTarget.vaultPath))) {
-        throw new Error(`ImageMagick did not create ${outputTarget.vaultPath}`);
-      }
-
-      linkUpdated = await this.replaceLinkWithRetry(
+      linkUpdated = await this.replaceImageLinks(
         sourceNote,
+        linkTargets,
         file.path,
         outputTarget.fileName
       );
       if (!linkUpdated) {
-        await this.removeGeneratedOutput(adapter, outputTarget.vaultPath);
+        await this.removeGeneratedOutput(outputFile);
         new Notice("AVIF link was not updated; the original image was preserved");
         return;
       }
@@ -466,8 +460,8 @@ export default class AVIFOnInsertPlugin extends Plugin {
       await this.app.fileManager.trashFile(file);
       new Notice(`Converted: ${outputTarget.fileName}`);
     } catch (error: unknown) {
-      if (outputTarget && !linkUpdated) {
-        await this.removeGeneratedOutputSafely(adapter, outputTarget.vaultPath);
+      if (outputFile && !linkUpdated) {
+        await this.removeGeneratedOutput(outputFile);
       }
 
       console.error("AVIF conversion failed", {
@@ -482,18 +476,32 @@ export default class AVIFOnInsertPlugin extends Plugin {
       );
     } finally {
       if (outputTarget) {
-        const { vaultPath } = outputTarget;
-        this.reservedOutputPaths.delete(vaultPath);
-        // The vault reports the output once ImageMagick creates it, which may
-        // be after the conversion ends. If it never does, for example because
-        // the conversion failed, the path is forgotten, unless a later
-        // conversion writes to it by then.
-        window.setTimeout(() => {
-          if (this.ownOutputPaths.get(vaultPath) === conversion) {
-            this.ownOutputPaths.delete(vaultPath);
-          }
-        }, OWN_OUTPUT_GRACE_MS);
+        this.reservedOutputPaths.delete(outputTarget.vaultPath);
       }
+    }
+  }
+
+  // ImageMagick writes to a temporary file, which is then added to the vault.
+  // The vault reports it right away, while its name is still reserved, and
+  // won't overwrite a file that took the name in the meantime.
+  private async createAvif(inputPath: string, vaultPath: string): Promise<TFile> {
+    const tempPath = join(tmpdir(), `avificator-${randomUUID()}.avif`);
+    try {
+      await execFileAsync(
+        this.settings.magickPath,
+        buildConvertArgs(inputPath, tempPath, this.settings),
+        {
+          timeout: CONVERSION_TIMEOUT_MS,
+          windowsHide: true,
+        }
+      );
+      const data = await readFile(tempPath);
+      return await this.app.vault.createBinary(vaultPath, new Uint8Array(data).buffer);
+    } finally {
+      // A leftover temporary file isn't worth failing the conversion for.
+      await rm(tempPath, { force: true }).catch((error: unknown) => {
+        console.warn("Could not remove the temporary AVIF file", { error, tempPath });
+      });
     }
   }
 
@@ -575,8 +583,10 @@ export default class AVIFOnInsertPlugin extends Plugin {
     let renamed = false;
 
     try {
-      const isLinked = await this.waitForImageLink(sourceNote, originalPath);
-      if (!isLinked) return;
+      // Obsidian resolves links only to files that exist, and after the
+      // rename a bare name could resolve to another file with it.
+      const linkTargets = await this.waitForImageLinks(sourceNote, originalPath);
+      if (!linkTargets) return;
 
       outputTarget = await this.reserveOutputTarget(
         file,
@@ -584,14 +594,14 @@ export default class AVIFOnInsertPlugin extends Plugin {
         file.extension.toLowerCase()
       );
       // The template gives the name the image already has, or one that
-      // differs only in case. Links ignore case, so they would still point to
-      // the image and couldn't be told apart from links to the new name.
+      // differs only in case, which links ignore.
       if (outputTarget.vaultPath.toLowerCase() === originalPath.toLowerCase()) return;
       await this.app.vault.rename(file, outputTarget.vaultPath);
       renamed = true;
 
-      const linkUpdated = await this.replaceLinkWithRetry(
+      const linkUpdated = await this.replaceImageLinks(
         sourceNote,
+        linkTargets,
         originalPath,
         outputTarget.fileName
       );
@@ -670,109 +680,83 @@ export default class AVIFOnInsertPlugin extends Plugin {
     }
   }
 
-  private async waitForImageLink(note: TFile, imagePath: string): Promise<boolean> {
-    const imageName = imagePath.slice(imagePath.lastIndexOf("/") + 1);
+  // The targets of the note's links to the image, once there are any.
+  private async waitForImageLinks(
+    note: TFile,
+    imagePath: string
+  ): Promise<Set<string> | null> {
     for (let attempt = 0; attempt < LINK_RETRY_COUNT; attempt += 1) {
+      await this.saveOpenNote(note);
       const content = await this.app.vault.read(note);
-      const result = this.replaceImageLinks(content, note, imagePath, imageName);
-      if (result.replacementCount > 0) return true;
+      const targets = findImageEmbedTargets(content, (target) =>
+        this.linkResolvesToPath(target, note, imagePath)
+      );
+      if (targets.size > 0) return targets;
 
       if (attempt < LINK_RETRY_COUNT - 1) {
         await wait(LINK_RETRY_DELAY_MS);
       }
     }
-    return false;
+    // Not a notice: such an image may have come with sync, not the paste.
+    console.info("No link to the new image in the note; left as is", {
+      imagePath,
+      notePath: note.path,
+    });
+    return null;
   }
 
-  private async replaceLinkWithRetry(
+  // Replaces the links found before, and any added since that still point to
+  // the original, so that none is left when the original goes to trash. After
+  // a rename nothing is at the original path, so only the links found before
+  // are replaced. The links were just found, so one pass is enough. It finds
+  // none only if they were removed in the meantime.
+  private async replaceImageLinks(
     note: TFile,
+    linkTargets: ReadonlySet<string>,
     originalPath: string,
     outputFileName: string
   ): Promise<boolean> {
-    for (let attempt = 0; attempt < LINK_RETRY_COUNT; attempt += 1) {
-      const currentContent = await this.app.vault.read(note);
-      const preview = this.replaceImageLinks(
-        currentContent,
-        note,
-        originalPath,
-        outputFileName
+    let replacementCount = 0;
+    await this.saveOpenNote(note);
+    await this.app.vault.process(note, (content) => {
+      const result = replaceImageEmbedLinks(
+        content,
+        outputFileName,
+        (target) =>
+          linkTargets.has(target) || this.linkResolvesToPath(target, note, originalPath)
       );
+      replacementCount = result.replacementCount;
+      return result.content;
+    });
+    return replacementCount > 0;
+  }
 
-      if (preview.replacementCount > 0) {
-        let replacementCount = 0;
-        await this.app.vault.process(note, (latestContent) => {
-          const result = this.replaceImageLinks(
-            latestContent,
-            note,
-            originalPath,
-            outputFileName
-          );
-          replacementCount = result.replacementCount;
-          return result.content;
-        });
-        if (replacementCount > 0) return true;
-      }
-
-      if (attempt < LINK_RETRY_COUNT - 1) {
-        await wait(LINK_RETRY_DELAY_MS);
+  // Obsidian saves a note up to 2 seconds after it is edited. Saving it now
+  // puts a just inserted link on disk, and keeps Obsidian from having to merge
+  // unsaved typing with the plugin's change, which it reports with a notice.
+  private async saveOpenNote(note: TFile): Promise<void> {
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      if (leaf.view instanceof MarkdownView && leaf.view.file === note) {
+        await leaf.view.save();
       }
     }
-    return false;
   }
 
-  private replaceImageLinks(
-    content: string,
-    note: TFile,
-    originalPath: string,
-    outputFileName: string
-  ): LinkReplacementResult {
-    return replaceImageEmbedLinks(content, outputFileName, (target) =>
-      this.linkResolvesToPath(target, note, originalPath)
-    );
-  }
-
-  // Works by path rather than TFile so that links can still be matched to an
-  // image that has already been renamed away from that path.
+  // The target comes decoded as Obsidian reads it. Obsidian itself resolves
+  // "./", "../", and "/" from the note.
   private linkResolvesToPath(target: string, note: TFile, filePath: string): boolean {
-    const decodedTarget = this.decodeLinkTarget(target);
-    const linkPath = getLinkpath(decodedTarget)
-      .replace(/\\/g, "/")
-      .replace(/^\.?\//, "");
-    const destination = this.app.metadataCache.getFirstLinkpathDest(linkPath, note.path);
-
-    if (destination) {
-      return destination.path === filePath;
-    }
-    return linkPathPointsTo(linkPath, note.path, filePath);
+    const linkPath = getLinkpath(target).replace(/\\/g, "/");
+    return this.app.metadataCache.getFirstLinkpathDest(linkPath, note.path)?.path === filePath;
   }
 
-  private decodeLinkTarget(target: string): string {
+  // Never throws, so that a failed cleanup doesn't hide why it was needed.
+  private async removeGeneratedOutput(outputFile: TFile): Promise<void> {
     try {
-      return decodeURIComponent(target);
-    } catch {
-      return target;
-    }
-  }
-
-  private async removeGeneratedOutput(
-    adapter: FileSystemAdapter,
-    outputPath: string
-  ): Promise<void> {
-    if (await adapter.exists(outputPath)) {
-      await adapter.remove(outputPath);
-    }
-  }
-
-  private async removeGeneratedOutputSafely(
-    adapter: FileSystemAdapter,
-    outputPath: string
-  ): Promise<void> {
-    try {
-      await this.removeGeneratedOutput(adapter, outputPath);
+      await this.app.vault.delete(outputFile);
     } catch (cleanupError: unknown) {
       console.error("Failed to remove generated AVIF output", {
         cleanupError,
-        outputPath,
+        outputPath: outputFile.path,
       });
     }
   }
@@ -1003,7 +987,7 @@ class AVIFSettingTab extends PluginSettingTab {
         .onChange(async (value) => {
           const template = normalizeFileNameTemplate(value);
           const unknownVariable = findUnknownVariable(template);
-          templateSetting.setErrorMessage?.(
+          templateSetting.setErrorMessage(
             unknownVariable ? `Unknown variable ${unknownVariable}` : null
           );
           if (unknownVariable) return;
@@ -1043,9 +1027,7 @@ class AVIFSettingTab extends PluginSettingTab {
         .onChange(async (value) => {
           const quality =
             value.trim() === "" ? null : validateQuality(Number(value));
-          // setErrorMessage exists since Obsidian 1.13; older versions just
-          // skip saving the invalid value.
-          qualitySetting.setErrorMessage?.(
+          qualitySetting.setErrorMessage(
             quality === null ? "Enter a whole number from 0 to 100" : null
           );
           if (quality === null) return;
@@ -1096,7 +1078,7 @@ class AVIFSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             const maxImageSize =
               value.trim() === "" ? null : validateMaxImageSize(Number(value));
-            maxSizeSetting.setErrorMessage?.(
+            maxSizeSetting.setErrorMessage(
               maxImageSize === null ? "Enter a whole number greater than 0" : null
             );
             if (maxImageSize === null) return;
