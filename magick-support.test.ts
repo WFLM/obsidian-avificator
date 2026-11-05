@@ -24,14 +24,6 @@ const FULL_FORMAT_LIST = `   Format  Module    Mode  Description
 
 const INPUT_FORMATS = ["PNG", "JPEG", "WEBP", "HEIC"];
 
-function describe(formatList: string, inputFormats = INPUT_FORMATS) {
-  return describeMagickSupport(
-    VERSION_OUTPUT,
-    parseFormatList(formatList),
-    inputFormats
-  );
-}
-
 test("parses read and write support from the format list", () => {
   const formats = parseFormatList(FULL_FORMAT_LIST);
   assert.deepEqual(formats.get("AVIF"), { read: true, write: true });
@@ -50,41 +42,36 @@ test("parses the ImageMagick 6 format list without a module column", () => {
   assert.deepEqual(formats.get("PNG"), { read: true, write: true });
 });
 
-test("reports full support with the version", () => {
-  assert.deepEqual(describe(FULL_FORMAT_LIST), [
+const WITHOUT_HEIC = FULL_FORMAT_LIST.replace(/^.*HEIC  HEIC.*\n/m, "");
+const READ_ONLY_AVIF = FULL_FORMAT_LIST.replace("AVIF  HEIC      rw+", "AVIF  HEIC      r--");
+
+for (const [name, formatList, inputFormats, expected] of [
+  ["reports full support with the version", FULL_FORMAT_LIST, INPUT_FORMATS, [
     { text: "ImageMagick 7.1.1-41: AVIF supported.", ok: true },
     { text: "Can read PNG, JPEG, WEBP, HEIC.", ok: true },
-  ]);
-});
-
-test("reports input formats ImageMagick can't read", () => {
-  const withoutHeic = FULL_FORMAT_LIST.replace(/^.*HEIC  HEIC.*\n/m, "");
-  assert.deepEqual(describe(withoutHeic), [
+  ]],
+  ["reports input formats ImageMagick can't read", WITHOUT_HEIC, INPUT_FORMATS, [
     { text: "ImageMagick 7.1.1-41: AVIF supported.", ok: true },
     { text: "Can read PNG, JPEG, WEBP.", ok: true },
     { text: "Can't read HEIC.", ok: false },
-  ]);
-});
-
-test("reports missing AVIF output", () => {
-  const readOnlyAvif = FULL_FORMAT_LIST.replace(
-    "AVIF  HEIC      rw+",
-    "AVIF  HEIC      r--"
-  );
-  assert.deepEqual(describe(readOnlyAvif), [
+  ]],
+  ["reports missing AVIF output", READ_ONLY_AVIF, INPUT_FORMATS, [
     { text: "ImageMagick 7.1.1-41: AVIF not supported.", ok: false },
     { text: "Images can't be converted.", ok: false },
     { text: "Can read PNG, JPEG, WEBP, HEIC.", ok: true },
-  ]);
-});
-
-test("checks only the given input formats", () => {
-  const withoutHeic = FULL_FORMAT_LIST.replace(/^.*HEIC  HEIC.*\n/m, "");
-  assert.deepEqual(describe(withoutHeic, ["PNG", "JPEG"]), [
+  ]],
+  ["checks only the given input formats", WITHOUT_HEIC, ["PNG", "JPEG"], [
     { text: "ImageMagick 7.1.1-41: AVIF supported.", ok: true },
     { text: "Can read PNG, JPEG.", ok: true },
-  ]);
-});
+  ]],
+] as const) {
+  test(name, () => {
+    assert.deepEqual(
+      describeMagickSupport(VERSION_OUTPUT, parseFormatList(formatList), inputFormats),
+      expected
+    );
+  });
+}
 
 test("reports a program that doesn't look like ImageMagick", () => {
   assert.deepEqual(

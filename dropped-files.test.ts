@@ -22,6 +22,18 @@ test("reads several URIs and skips comments and blank lines", () => {
   );
 });
 
+// Electron on Wayland puts the addresses of several dropped files one right
+// after another.
+test("reads several URIs run together without line breaks", () => {
+  assert.deepEqual(
+    parseFileUriList(
+      "file:///home/user/Pictures/IMG_0001.jpegfile:///home/user/Pictures/IMG_0002.jpeg"
+    ),
+    ["/home/user/Pictures/IMG_0001.jpeg", "/home/user/Pictures/IMG_0002.jpeg"]
+  );
+  assert.deepEqual(parseFileUriList("file:///tmp/profile:/a.png"), ["/tmp/profile:/a.png"]);
+});
+
 test("rejects lists with anything but file URIs", () => {
   assert.equal(parseFileUriList("file:///tmp/a.png\nhttps://example.com/b.png"), null);
   assert.equal(parseFileUriList("not a uri"), null);

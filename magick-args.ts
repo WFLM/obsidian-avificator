@@ -5,11 +5,8 @@ export interface ConvertOptions {
   maxImageSize: number;
 }
 
-export function buildConvertArgs(
-  inputPath: string,
-  outputPath: string,
-  options: ConvertOptions
-): string[] {
+// The AVIF goes to standard output, so the plugin can add it to the vault.
+export function buildConvertArgs(inputPath: string, options: ConvertOptions): string[] {
   // -strip would also drop the ICC profile and shift colors of wide-gamut
   // photos, so remove every profile except ICC instead.
   const metadataArgs = options.stripMetadata ? ["+profile", "!icc,*"] : [];
@@ -19,10 +16,6 @@ export function buildConvertArgs(
     : [];
 
   return [
-    // Otherwise %d, %o, and %x in the output path are read as placeholders,
-    // and growth%o.avif is written as growth0.avif.
-    "-define",
-    "filename:literal=true",
     inputPath,
     // Rotates the pixels as the EXIF orientation says, so the image stays
     // upright without it: older ImageMagick versions don't carry it over to
@@ -32,7 +25,7 @@ export function buildConvertArgs(
     ...sizeArgs,
     "-quality",
     options.quality.toString(),
-    outputPath,
+    "avif:-",
   ];
 }
 

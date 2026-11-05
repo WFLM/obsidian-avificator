@@ -2,12 +2,15 @@ import { isAbsolute, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // A text/uri-list has one URI per line; lines starting with "#" are comments.
-// Returns null unless every URI points to a local file.
+// Electron on Wayland runs the URIs together, so a line is also split before
+// each "file://", which a file URI can't contain. Returns null unless every
+// URI points to a local file.
 export function parseFileUriList(uriList: string): string[] | null {
   const uris = uriList
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => line !== "" && !line.startsWith("#"));
+    .filter((line) => line !== "" && !line.startsWith("#"))
+    .flatMap((line) => line.split(/(?=file:\/\/)/i));
   if (uris.length === 0) return null;
 
   const paths: string[] = [];

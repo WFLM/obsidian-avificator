@@ -81,12 +81,16 @@ The build creates `main.js` in the plugin folder.
   - Rename it using the [file name template](#file-name-template), or keep
     its name if renaming is off for the format.
   - Replace the original image link with the new AVIF link.
-  - Move the original to trash only after the link is updated successfully,
-    following Obsidian's **Deleted files** setting.
+  - Delete the original only after the link is updated successfully. The
+    original is the file Obsidian created in the vault for the paste or drop;
+    a file dragged from a folder stays where it is.
   - Preserve the original and notify you if conversion fails.
 - Only images you paste or drop into a note are processed. Images that reach
   the vault in other ways, for example through sync while the note is open on
   another device or from other plugins, are left alone.
+- Several images pasted or dropped at once into a quote or callout stay inside
+  it: Obsidian separates them with a blank line, and the plugin adds the
+  quote's `>` to it. This works in every mode.
 
 ### Modes
 

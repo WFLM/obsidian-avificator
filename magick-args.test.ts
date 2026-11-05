@@ -11,20 +11,18 @@ const BASE_OPTIONS: ConvertOptions = {
 
 test("removes metadata but keeps the color profile when asked", () => {
   assert.deepEqual(
-    buildConvertArgs("/vault/in.jpg", "/vault/out.avif", {
+    buildConvertArgs("/vault/in.jpg", {
       ...BASE_OPTIONS,
       stripMetadata: true,
     }),
     [
-      "-define",
-      "filename:literal=true",
       "/vault/in.jpg",
       "-auto-orient",
       "+profile",
       "!icc,*",
       "-quality",
       "80",
-      "/vault/out.avif",
+      "avif:-",
     ]
   );
 });
@@ -32,58 +30,48 @@ test("removes metadata but keeps the color profile when asked", () => {
 // Older ImageMagick versions don't carry the EXIF orientation over to AVIF.
 test("keeps metadata and size when both options are off, but turns the image upright", () => {
   assert.deepEqual(
-    buildConvertArgs("/vault/in.jpg", "/vault/out.avif", {
+    buildConvertArgs("/vault/in.jpg", {
       ...BASE_OPTIONS,
       quality: 55,
     }),
     [
-      "-define",
-      "filename:literal=true",
       "/vault/in.jpg",
       "-auto-orient",
       "-quality",
       "55",
-      "/vault/out.avif",
+      "avif:-",
     ]
   );
 });
 
 test("shrinks only images whose longer side exceeds the limit", () => {
   assert.deepEqual(
-    buildConvertArgs("/vault/in.jpg", "/vault/out.avif", {
+    buildConvertArgs("/vault/in.jpg", {
       ...BASE_OPTIONS,
       limitImageSize: true,
       maxImageSize: 1600,
     }),
     [
-      "-define",
-      "filename:literal=true",
       "/vault/in.jpg",
       "-auto-orient",
       "-resize",
       "1600x1600>",
       "-quality",
       "80",
-      "/vault/out.avif",
+      "avif:-",
     ]
   );
 });
 
-// Otherwise ImageMagick reads %d, %o, and %x in the output name as
-// placeholders and writes, for example, growth0.avif instead of growth%o.avif.
-test("writes the output name as it is, even with a percent sign", () => {
-  assert.deepEqual(
-    buildConvertArgs("/vault/growth%o.png", "/vault/growth%o.avif", BASE_OPTIONS),
-    [
-      "-define",
-      "filename:literal=true",
-      "/vault/growth%o.png",
-      "-auto-orient",
-      "-quality",
-      "80",
-      "/vault/growth%o.avif",
-    ]
-  );
+// The plugin adds the AVIF to the vault itself.
+test("writes the AVIF to standard output", () => {
+  assert.deepEqual(buildConvertArgs("/vault/growth%o.png", BASE_OPTIONS), [
+    "/vault/growth%o.png",
+    "-auto-orient",
+    "-quality",
+    "80",
+    "avif:-",
+  ]);
 });
 
 // ImageMagick 6 has no "magick identify", only "convert", and -format with
