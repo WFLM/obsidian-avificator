@@ -96,7 +96,7 @@ The build creates `main.js` in the plugin folder.
 
 The current mode is shown in the status bar as `AVIF: convert`,
 `AVIF: rename`, or `AVIF: off`. Click it to switch modes. You can also switch
-modes with the **Switch mode to …** commands in the command palette and assign
+modes with the **Switch mode: …** commands in the command palette and assign
 them hotkeys. The mode is saved and stays the same after restarting Obsidian.
 
 - **Convert to AVIF** (default): converts and renames images as checked under
@@ -244,6 +244,17 @@ in orange: such images can only be renamed.
 | TIFF | `.tif`, `.tiff` |
 | JXL (JPEG XL) | `.jxl` |
 | AVIF (rename only) | `.avif` |
+
+## Privacy
+
+- The plugin doesn't use the network and doesn't collect or send any data.
+- It runs ImageMagick (the `magick` command, or the path set in the settings)
+  on your computer to convert images and to check which formats it supports.
+  Your images never leave your computer.
+- It reads files outside the vault only when **Copy dragged images
+  (file:/// links)** is on and you drag an image from a file manager: it reads
+  that image to copy it into the vault. The dragged file itself is never
+  changed or deleted.
 
 ## Troubleshooting
 

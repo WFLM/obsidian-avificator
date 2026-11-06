@@ -6,6 +6,5 @@
   "description": "Convert images you add to notes to AVIF with ImageMagick, and rename them using a template based on the note title and date.",
   "author": "WFLM",
   "authorUrl": "https://github.com/wflm",
-  "isDesktopOnly": true,
-  "main": "main.js"
+  "isDesktopOnly": true
 }

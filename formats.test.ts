@@ -24,7 +24,7 @@ function png(...chunks: number[][]): Uint8Array {
   return new Uint8Array([...PNG_SIGNATURE, ...chunks.flat()]);
 }
 
-test("maps file extensions to image formats", () => {
+void test("maps file extensions to image formats", () => {
   assert.equal(formatForExtension("png"), "PNG");
   assert.equal(formatForExtension("JPG"), "JPEG");
   assert.equal(formatForExtension("jpeg"), "JPEG");
@@ -36,38 +36,38 @@ test("maps file extensions to image formats", () => {
   assert.equal(formatForExtension("AVIF"), "AVIF");
 });
 
-test("tells animated and multi-page images by their frame count", () => {
+void test("tells animated and multi-page images by their frame count", () => {
   assert.equal(multiFrameKind("GIF", 3), "animated");
   assert.equal(multiFrameKind("TIFF", 2), "pages");
   assert.equal(multiFrameKind("JPEG", 1), null);
 });
 
-test("trusts the frame count over the extension", () => {
+void test("trusts the frame count over the extension", () => {
   // An animated WebP or GIF saved with a .png extension.
   assert.equal(multiFrameKind("PNG", 3), "animated");
 });
 
-test("doesn't convert AVIF to AVIF", () => {
+void test("doesn't convert AVIF to AVIF", () => {
   assert.equal(canConvert("AVIF"), false);
   assert.equal(canConvert("PNG"), true);
   assert.equal(canConvert("HEIC"), true);
 });
 
-test("detects an animated PNG by its acTL chunk", () => {
-  const ihdr = chunk("IHDR", new Array(13).fill(0));
+void test("detects an animated PNG by its acTL chunk", () => {
+  const ihdr = chunk("IHDR", new Array<number>(13).fill(0));
   assert.equal(
-    isAnimatedPng(png(ihdr, chunk("acTL", new Array(8).fill(0)), chunk("IDAT"))),
+    isAnimatedPng(png(ihdr, chunk("acTL", new Array<number>(8).fill(0)), chunk("IDAT"))),
     true
   );
 });
 
-test("treats a PNG without an acTL chunk before IDAT as static", () => {
-  const ihdr = chunk("IHDR", new Array(13).fill(0));
+void test("treats a PNG without an acTL chunk before IDAT as static", () => {
+  const ihdr = chunk("IHDR", new Array<number>(13).fill(0));
   assert.equal(isAnimatedPng(png(ihdr, chunk("IDAT"), chunk("IEND"))), false);
   assert.equal(isAnimatedPng(png(ihdr, chunk("IDAT"), chunk("acTL"))), false);
 });
 
-test("treats other or truncated data as not an animated PNG", () => {
+void test("treats other or truncated data as not an animated PNG", () => {
   assert.equal(isAnimatedPng(new Uint8Array([0xff, 0xd8, 0xff, 0xe0])), false);
   assert.equal(isAnimatedPng(png()), false);
   assert.equal(isAnimatedPng(png([0, 0, 0, 13, 73])), false);

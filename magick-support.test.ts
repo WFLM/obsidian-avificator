@@ -24,7 +24,7 @@ const FULL_FORMAT_LIST = `   Format  Module    Mode  Description
 
 const INPUT_FORMATS = ["PNG", "JPEG", "WEBP", "HEIC"];
 
-test("parses read and write support from the format list", () => {
+void test("parses read and write support from the format list", () => {
   const formats = parseFormatList(FULL_FORMAT_LIST);
   assert.deepEqual(formats.get("AVIF"), { read: true, write: true });
   assert.deepEqual(formats.get("JPEG"), { read: true, write: true });
@@ -32,7 +32,7 @@ test("parses read and write support from the format list", () => {
   assert.equal(formats.has("FORMAT"), false);
 });
 
-test("parses the ImageMagick 6 format list without a module column", () => {
+void test("parses the ImageMagick 6 format list without a module column", () => {
   const formats = parseFormatList(`   Format  Mode  Description
 -------------------------------------------------------------------------------
      AVIF  r--   AV1 Image File Format
@@ -42,7 +42,7 @@ test("parses the ImageMagick 6 format list without a module column", () => {
   assert.deepEqual(formats.get("PNG"), { read: true, write: true });
 });
 
-const WITHOUT_HEIC = FULL_FORMAT_LIST.replace(/^.*HEIC  HEIC.*\n/m, "");
+const WITHOUT_HEIC = FULL_FORMAT_LIST.replace(/^.*HEIC {2}HEIC.*\n/m, "");
 const READ_ONLY_AVIF = FULL_FORMAT_LIST.replace("AVIF  HEIC      rw+", "AVIF  HEIC      r--");
 
 for (const [name, formatList, inputFormats, expected] of [
@@ -65,7 +65,7 @@ for (const [name, formatList, inputFormats, expected] of [
     { text: "Can read PNG, JPEG.", ok: true },
   ]],
 ] as const) {
-  test(name, () => {
+  void test(name, () => {
     assert.deepEqual(
       describeMagickSupport(VERSION_OUTPUT, parseFormatList(formatList), inputFormats),
       expected
@@ -73,14 +73,14 @@ for (const [name, formatList, inputFormats, expected] of [
   });
 }
 
-test("reports a program that doesn't look like ImageMagick", () => {
+void test("reports a program that doesn't look like ImageMagick", () => {
   assert.deepEqual(
     describeMagickSupport("hello\n", parseFormatList("world\n"), INPUT_FORMATS),
     [{ text: "The program at this path doesn't look like ImageMagick.", ok: false }]
   );
 });
 
-test("reports a missing executable", () => {
+void test("reports a missing executable", () => {
   const error = Object.assign(new Error("spawn magick ENOENT"), {
     code: "ENOENT",
   });
@@ -89,21 +89,21 @@ test("reports a missing executable", () => {
   ]);
 });
 
-test("reports other errors with the first line of their message", () => {
+void test("reports other errors with the first line of their message", () => {
   const error = new Error("spawn /usr/bin/magick EACCES\nmore details");
   assert.deepEqual(describeMagickError(error), [
     { text: "Could not run ImageMagick: spawn /usr/bin/magick EACCES", ok: false },
   ]);
 });
 
-test("reads the frame count ImageMagick prints", () => {
+void test("reads the frame count ImageMagick prints", () => {
   assert.equal(parseFrameCount("3\n"), 3);
   assert.equal(parseFrameCount("1\n"), 1);
   assert.equal(parseFrameCount(""), null);
   assert.equal(parseFrameCount("magick: no decode delegate\n"), null);
 });
 
-test("takes an error ImageMagick itself reports for a read error", () => {
+void test("takes an error ImageMagick itself reports for a read error", () => {
   const exited = Object.assign(new Error("Command failed: magick -ping"), {
     code: 1,
     killed: false,
@@ -112,7 +112,7 @@ test("takes an error ImageMagick itself reports for a read error", () => {
   assert.equal(isMagickReadError(exited), true);
 });
 
-test("doesn't take a missing, unrunnable, or timed out ImageMagick for a read error", () => {
+void test("doesn't take a missing, unrunnable, or timed out ImageMagick for a read error", () => {
   const missing = Object.assign(new Error("spawn magick ENOENT"), { code: "ENOENT" });
   const denied = Object.assign(new Error("spawn magick EACCES"), { code: "EACCES" });
   const timedOut = Object.assign(new Error("Command failed"), {

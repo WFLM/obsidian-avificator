@@ -19,7 +19,7 @@ function insert(doc: string, cursor: number, ...texts: string[]): { doc: string;
 
 const CALLOUT = "> [!info]- photo\n> ";
 
-test("keeps every pasted image inside a callout", () => {
+void test("keeps every pasted image inside a callout", () => {
   const result = insert(CALLOUT, CALLOUT.length, "![[a.png]]\n\n", "![[b.png]]\n\n", "![[c.png]]");
   assert.equal(
     result.doc,
@@ -28,7 +28,7 @@ test("keeps every pasted image inside a callout", () => {
   assert.equal(result.cursor, result.doc.length);
 });
 
-test("keeps Markdown image links inside nested and indented quotes", () => {
+void test("keeps Markdown image links inside nested and indented quotes", () => {
   assert.equal(
     insert("> > ", 4, "![](a%20b.png)\n\n", "![](c.png)").doc,
     "> > ![](a%20b.png)\n> >\n> > ![](c.png)"
@@ -39,19 +39,19 @@ test("keeps Markdown image links inside nested and indented quotes", () => {
   );
 });
 
-test("moves text after the cursor to the next quoted line", () => {
+void test("moves text after the cursor to the next quoted line", () => {
   assert.equal(
     insert("> before after", 9, "![[a.png]]\n\n").doc,
     "> before ![[a.png]]\n>\n> after"
   );
 });
 
-test("leaves insertions outside quotes as Obsidian makes them", () => {
+void test("leaves insertions outside quotes as Obsidian makes them", () => {
   assert.equal(insert("", 0, "![[a.png]]\n\n", "![[b.png]]").doc, "![[a.png]]\n\n![[b.png]]");
   assert.equal(insert("- item ", 7, "![[a.png]]\n\n").doc, "- item ![[a.png]]\n\n");
 });
 
-test("leaves other text, and images put before the quote marks, as they are", () => {
+void test("leaves other text, and images put before the quote marks, as they are", () => {
   assert.equal(insert("> ", 2, "Some text\n\n").doc, "> Some text\n\n");
   assert.equal(insert("> ", 0, "![[a.png]]\n\n").doc, "![[a.png]]\n\n> ");
 });

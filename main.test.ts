@@ -87,6 +87,7 @@ function createPlugin(app: object, modules: Record<string, unknown> = {}): Plugi
       id === "obsidian" ? obsidian : id in modules ? modules[id] : require(id),
     console,
     setTimeout,
+    window: { setTimeout },
   });
   const plugin = new pluginModule.exports.default(app as App, {} as PluginManifest);
   return plugin as unknown as PluginUnderTest;
@@ -155,7 +156,7 @@ function createImageFixture(outputName = "renamed.png") {
   return { note, image, output, bytes, files, deleted, state, vault, plugin };
 }
 
-test("a canceled import preserves a later note's insertion window", async (context) => {
+void test("a canceled import preserves a later note's insertion window", async (context) => {
   const sourcePath = await sourceImage(context);
   const note = file("a.md");
   const nextNote = file("b.md");
@@ -189,7 +190,7 @@ test("a canceled import preserves a later note's insertion window", async (conte
   assert.deepEqual(deleted, []);
 });
 
-test("switching notes during a copy removes only the newly created image", async (context) => {
+void test("switching notes during a copy removes only the newly created image", async (context) => {
   const sourcePath = await sourceImage(context);
   const note = file("a.md");
   const info = { file: note };
@@ -217,7 +218,7 @@ test("switching notes during a copy removes only the newly created image", async
 });
 
 // keepEmbedsInQuotes then keeps them in a quote, as it does with Obsidian's.
-test("dropped images are inserted as Obsidian inserts files", async (context) => {
+void test("dropped images are inserted as Obsidian inserts files", async (context) => {
   const sourcePaths = [
     await sourceImage(context, "a.png"),
     await sourceImage(context, "b.png"),
@@ -248,7 +249,7 @@ test("dropped images are inserted as Obsidian inserts files", async (context) =>
 });
 
 for (const target of ["image.png", "attachments/image.png"]) {
-  test(`renaming preserves a new image's link using ${target}`, async () => {
+  void test(`renaming preserves a new image's link using ${target}`, async () => {
     const { note, image, output, bytes, files, state, vault, plugin } = createImageFixture();
     const originalPath = image.path;
     const replacement = file(originalPath);
@@ -278,7 +279,7 @@ for (const target of ["image.png", "attachments/image.png"]) {
 }
 
 for (const failure of ["copy", "links", "missing-link", "unlink"] as const) {
-  test(`renaming preserves image data when ${failure} fails`, async (context) => {
+  void test(`renaming preserves image data when ${failure} fails`, async (context) => {
     context.mock.method(console, "error", (): void => undefined);
     const { note, image, output, bytes, files, deleted, state, vault, plugin } = createImageFixture();
     const existingOutput = file(output.path);
@@ -321,7 +322,7 @@ for (const failure of ["copy", "links", "missing-link", "unlink"] as const) {
 }
 
 for (const changeDuring of ["read", "note update"] as const) {
-  test(`renaming preserves an image modified during ${changeDuring}`, async () => {
+  void test(`renaming preserves an image modified during ${changeDuring}`, async () => {
     const { note, image, output, bytes, files, state, vault, plugin } = createImageFixture();
     const editedBytes = Uint8Array.from([4, 5, 6]).buffer;
     const editImage = (): void => {
@@ -348,7 +349,7 @@ for (const changeDuring of ["read", "note update"] as const) {
   });
 }
 
-test("conversion updates links added while creating the AVIF before deleting the image", async () => {
+void test("conversion updates links added while creating the AVIF before deleting the image", async () => {
   const { note, image, output, deleted, state, vault, plugin } = createImageFixture("output.avif");
   const { delete: remove } = vault;
   vault.delete = async (original) => {
@@ -367,7 +368,7 @@ test("conversion updates links added while creating the AVIF before deleting the
   assert.deepEqual(deleted, [image]);
 });
 
-test("conversion adds ImageMagick's output to the vault byte for byte", async () => {
+void test("conversion adds ImageMagick's output to the vault byte for byte", async () => {
   // Bytes that reading the output as text would change.
   const avif = Buffer.from([0x00, 0xff, 0x80, 0x0d, 0x0a]);
   const calls: { args: string[]; options: { encoding?: string; maxBuffer?: number } }[] = [];

@@ -39,11 +39,11 @@ const DEFAULTS = {
   showStatusBar: true,
 };
 
-test("uses defaults when nothing is stored", () => {
+void test("uses defaults when nothing is stored", () => {
   assert.deepEqual(parseSettings(null), DEFAULTS);
 });
 
-test("keeps valid stored settings and trims the ImageMagick path", () => {
+void test("keeps valid stored settings and trims the ImageMagick path", () => {
   assert.deepEqual(
     parseSettings({
       mode: "rename",
@@ -78,7 +78,7 @@ test("keeps valid stored settings and trims the ImageMagick path", () => {
 });
 
 // Windows Explorer's "Copy as path" puts the path in quotes.
-test("removes the quotes around a pasted ImageMagick path", () => {
+void test("removes the quotes around a pasted ImageMagick path", () => {
   assert.equal(
     normalizeMagickPath(' "C:\\Program Files\\ImageMagick\\magick.exe" '),
     "C:\\Program Files\\ImageMagick\\magick.exe"
@@ -87,7 +87,7 @@ test("removes the quotes around a pasted ImageMagick path", () => {
   assert.equal(normalizeMagickPath('""'), "magick");
 });
 
-test("falls back to defaults for invalid stored values", () => {
+void test("falls back to defaults for invalid stored values", () => {
   assert.deepEqual(
     parseSettings({
       mode: "pause",
@@ -124,11 +124,11 @@ test("falls back to defaults for invalid stored values", () => {
   );
 });
 
-test("keeps settings saved before the newer options existed", () => {
+void test("keeps settings saved before the newer options existed", () => {
   assert.deepEqual(parseSettings({ quality: 30 }), { ...DEFAULTS, quality: 30 });
 });
 
-test("enables formats and actions missing from stored settings", () => {
+void test("enables formats and actions missing from stored settings", () => {
   assert.deepEqual(
     parseSettings({ formats: { PNG: NONE, JPEG: { convert: false }, WEBP: { rename: "no" } } })
       .formats,
@@ -136,26 +136,26 @@ test("enables formats and actions missing from stored settings", () => {
   );
 });
 
-test("never converts AVIF, whatever is stored", () => {
+void test("never converts AVIF, whatever is stored", () => {
   assert.deepEqual(parseSettings({ formats: { AVIF: BOTH } }).formats.AVIF, RENAME_ONLY);
   assert.deepEqual(parseSettings({ formats: { AVIF: CONVERT_ONLY } }).formats.AVIF, NONE);
 });
 
-test("follows the format actions in Convert mode", () => {
+void test("follows the format actions in Convert mode", () => {
   assert.deepEqual(effectiveActions("convert", CONVERT_ONLY), CONVERT_ONLY);
   assert.deepEqual(effectiveActions("convert", BOTH), BOTH);
 });
 
-test("only renames in Rename only mode, and only where renaming is on", () => {
+void test("only renames in Rename only mode, and only where renaming is on", () => {
   assert.deepEqual(effectiveActions("rename", BOTH), RENAME_ONLY);
   assert.deepEqual(effectiveActions("rename", CONVERT_ONLY), NONE);
 });
 
-test("does nothing when the mode is off", () => {
+void test("does nothing when the mode is off", () => {
   assert.deepEqual(effectiveActions("off", BOTH), NONE);
 });
 
-test("accepts only a positive whole number as the maximum image size", () => {
+void test("accepts only a positive whole number as the maximum image size", () => {
   assert.equal(validateMaxImageSize(1), 1);
   assert.equal(validateMaxImageSize(8000), 8000);
   assert.equal(validateMaxImageSize(0), null);

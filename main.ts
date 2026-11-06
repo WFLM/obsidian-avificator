@@ -142,7 +142,7 @@ interface OutputTarget {
 }
 
 function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 // Obsidian's Editor can't map screen coordinates to text, so ask its CodeMirror
@@ -220,7 +220,7 @@ export default class AVIFOnInsertPlugin extends Plugin {
     for (const mode of MODES) {
       this.addCommand({
         id: `switch-mode-${mode}`,
-        name: `Switch mode to ${MODE_LABELS[mode]}`,
+        name: `Switch mode: ${MODE_LABELS[mode]}`,
         callback: async () => {
           await this.setMode(mode);
           new Notice(`AVIFicator mode: ${MODE_LABELS[mode]}`);
@@ -232,6 +232,10 @@ export default class AVIFOnInsertPlugin extends Plugin {
 
     this.registerEvent(
       this.app.workspace.on("editor-paste", (evt, _editor, info) => {
+        // Another plugin has already handled this paste.
+        if (evt.defaultPrevented) return;
+        // No evt.preventDefault(): Obsidian still pastes the files itself, and
+        // the plugin only waits for them to appear in the vault.
         if (info.file && (!evt.clipboardData || pasteMayAddFiles(evt.clipboardData))) {
           this.insertWindow.open(info.file.path, Date.now());
         }
@@ -411,6 +415,8 @@ export default class AVIFOnInsertPlugin extends Plugin {
     this.insertWindow.open(note.path, Date.now());
     const copy = await this.app.vault.createBinary(attachmentPath, new Uint8Array(data).buffer);
     if (info.file === note) return copy;
+    // The plugin made this copy a moment ago and nothing links to it, so it
+    // isn't kept in trash. The dragged file stays where it was.
     await this.app.vault.delete(copy);
     return null;
   }
@@ -619,6 +625,8 @@ export default class AVIFOnInsertPlugin extends Plugin {
         return;
       }
 
+      // The same image is now in the vault under the new name, so the
+      // original isn't kept in trash.
       await this.app.vault.delete(file);
       new Notice(`Renamed: ${outputTarget.fileName}`);
     } catch (error: unknown) {
@@ -697,7 +705,7 @@ export default class AVIFOnInsertPlugin extends Plugin {
       }
     }
     // Not a notice: such an image may have come with sync, not the paste.
-    console.info("No link to the new image in the note; left as is", {
+    console.debug("No link to the new image in the note; left as is", {
       imagePath: image.path,
       notePath: note.path,
     });
@@ -743,7 +751,9 @@ export default class AVIFOnInsertPlugin extends Plugin {
     return this.app.metadataCache.getFirstLinkpathDest(linkPath, note.path);
   }
 
-  // Never throws, so that a failed cleanup doesn't hide why it was needed.
+  // The plugin has just made this file and nothing links to it, so it isn't
+  // kept in trash. Never throws, so that a failed cleanup doesn't hide why it
+  // was needed.
   private async removeGeneratedOutput(outputFile: TFile): Promise<void> {
     try {
       await this.app.vault.delete(outputFile);
@@ -900,7 +910,7 @@ class AVIFSettingTab extends PluginSettingTab {
             if (isMode(value)) {
               await this.plugin.setMode(value);
               // The format table dims the columns this mode ignores.
-              this.display();
+              this.update();
             }
           })
       );
@@ -1057,7 +1067,7 @@ class AVIFSettingTab extends PluginSettingTab {
             this.plugin.settings.limitImageSize = value;
             await this.plugin.saveSettings();
             // Show or hide the maximum size field.
-            this.display();
+            this.update();
           })
       );
 

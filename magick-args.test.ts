@@ -9,7 +9,7 @@ const BASE_OPTIONS: ConvertOptions = {
   maxImageSize: 2000,
 };
 
-test("removes metadata but keeps the color profile when asked", () => {
+void test("removes metadata but keeps the color profile when asked", () => {
   assert.deepEqual(
     buildConvertArgs("/vault/in.jpg", {
       ...BASE_OPTIONS,
@@ -28,7 +28,7 @@ test("removes metadata but keeps the color profile when asked", () => {
 });
 
 // Older ImageMagick versions don't carry the EXIF orientation over to AVIF.
-test("keeps metadata and size when both options are off, but turns the image upright", () => {
+void test("keeps metadata and size when both options are off, but turns the image upright", () => {
   assert.deepEqual(
     buildConvertArgs("/vault/in.jpg", {
       ...BASE_OPTIONS,
@@ -44,7 +44,7 @@ test("keeps metadata and size when both options are off, but turns the image upr
   );
 });
 
-test("shrinks only images whose longer side exceeds the limit", () => {
+void test("shrinks only images whose longer side exceeds the limit", () => {
   assert.deepEqual(
     buildConvertArgs("/vault/in.jpg", {
       ...BASE_OPTIONS,
@@ -64,7 +64,7 @@ test("shrinks only images whose longer side exceeds the limit", () => {
 });
 
 // The plugin adds the AVIF to the vault itself.
-test("writes the AVIF to standard output", () => {
+void test("writes the AVIF to standard output", () => {
   assert.deepEqual(buildConvertArgs("/vault/growth%o.png", BASE_OPTIONS), [
     "/vault/growth%o.png",
     "-auto-orient",
@@ -76,7 +76,7 @@ test("writes the AVIF to standard output", () => {
 
 // ImageMagick 6 has no "magick identify", only "convert", and -format with
 // info: would print the count once per frame.
-test("prints the frame count once, without the identify subcommand", () => {
+void test("prints the frame count once, without the identify subcommand", () => {
   assert.deepEqual(buildFrameCountArgs("/vault/in.gif"), [
     "-ping",
     "/vault/in.gif",

@@ -9,7 +9,7 @@ import {
 const matchesOriginal = (target: string): boolean =>
   target === "image.png" || target === "attachments/image.png";
 
-test("replaces an exact wiki embed", () => {
+void test("replaces an exact wiki embed", () => {
   const result = replaceImageEmbedLinks(
     "Before ![[image.png]] after",
     "Note-20260723.avif",
@@ -20,7 +20,7 @@ test("replaces an exact wiki embed", () => {
   assert.equal(result.replacementCount, 1);
 });
 
-test("preserves a wiki embed path and alias", () => {
+void test("preserves a wiki embed path and alias", () => {
   const result = replaceImageEmbedLinks(
     "![[attachments/image.png|300]]",
     "Note-20260723.avif",
@@ -32,7 +32,7 @@ test("preserves a wiki embed path and alias", () => {
 });
 
 // Obsidian keeps single brackets in the names of pasted and dropped files.
-test("replaces a wiki embed with a bracket in the file name", () => {
+void test("replaces a wiki embed with a bracket in the file name", () => {
   const result = replaceImageEmbedLinks(
     "![[photo [2026].png|300]] and ![[other.png]]",
     "Note-20260723.avif",
@@ -44,7 +44,7 @@ test("replaces a wiki embed with a bracket in the file name", () => {
 });
 
 // Obsidian starts a subpath only at "#" and keeps "?" in attachment names.
-test("keeps a question mark in the file name and a heading after it", () => {
+void test("keeps a question mark in the file name and a heading after it", () => {
   const result = replaceImageEmbedLinks(
     "![[Why?.png]] ![](Why%3F.png) ![[Why?.png#^block]]",
     "Note-20260723.avif",
@@ -58,7 +58,7 @@ test("keeps a question mark in the file name and a heading after it", () => {
   assert.equal(result.replacementCount, 3);
 });
 
-test("preserves Markdown alt text, path, and title", () => {
+void test("preserves Markdown alt text, path, and title", () => {
   const result = replaceImageEmbedLinks(
     '![Diagram](attachments/image.png "Preview")',
     "Note (draft).avif",
@@ -74,7 +74,7 @@ test("preserves Markdown alt text, path, and title", () => {
 
 // A backslash could be matched two ways, which made the time double with
 // each one in an unclosed link.
-test("skips an unclosed Markdown link with many backslashes quickly", () => {
+void test("skips an unclosed Markdown link with many backslashes quickly", () => {
   const content = `![](C:${"\\a".repeat(26)} `;
   const start = Date.now();
   const result = replaceImageEmbedLinks(content, "Note-20260723.avif", () => true);
@@ -83,7 +83,7 @@ test("skips an unclosed Markdown link with many backslashes quickly", () => {
   assert.equal(result.replacementCount, 0);
 });
 
-test("finds a Markdown link target with escaped parentheses", () => {
+void test("finds a Markdown link target with escaped parentheses", () => {
   assert.deepEqual(
     [...findImageEmbedTargets("![](a\\(b\\).png)", () => true)],
     ["a\\(b\\).png"]
@@ -91,7 +91,7 @@ test("finds a Markdown link target with escaped parentheses", () => {
 });
 
 // Obsidian leaves parentheses unencoded in the Markdown links it inserts.
-test("replaces a Markdown embed with parentheses in the file name", () => {
+void test("replaces a Markdown embed with parentheses in the file name", () => {
   const result = replaceImageEmbedLinks(
     '![](image%20(1).png) ![](a(1).png "Title")',
     "Note-20260723.avif",
@@ -102,7 +102,7 @@ test("replaces a Markdown embed with parentheses in the file name", () => {
   assert.equal(result.replacementCount, 2);
 });
 
-test("does not replace unrelated image embeds", () => {
+void test("does not replace unrelated image embeds", () => {
   const content = "![[other.png]]\n![Other](attachments/other.png)";
   const result = replaceImageEmbedLinks(
     content,
@@ -116,7 +116,7 @@ test("does not replace unrelated image embeds", () => {
 
 // Obsidian decodes Markdown link targets with decodeURI, keeping a target it
 // can't decode as it is, and takes wiki link targets as they are.
-test("gives link targets as Obsidian reads them", () => {
+void test("gives link targets as Obsidian reads them", () => {
   const content = "![](photo%201.png) ![[photo%201.png]] ![](100%.png) ![](<a%20b.png>)";
 
   assert.deepEqual(
@@ -125,7 +125,7 @@ test("gives link targets as Obsidian reads them", () => {
   );
 });
 
-test("finds the targets of the embeds that point to the image, each once", () => {
+void test("finds the targets of the embeds that point to the image, each once", () => {
   const content =
     "![[ image.png |300]] ![](attachments/image.png) ![[other.png]] ![[image.png]]";
 
@@ -135,11 +135,11 @@ test("finds the targets of the embeds that point to the image, each once", () =>
   );
 });
 
-test("a file name is taken by a file of that name in any folder, whatever the case", () => {
+void test("a file name is taken by a file of that name in any folder, whatever the case", () => {
   assert.equal(isFileNameTaken("Meeting-000.avif", ["Work/attachments/Meeting-000.avif"]), true);
   assert.equal(isFileNameTaken("meeting-000.avif", ["Meeting-000.AVIF"]), true);
 });
 
-test("a file name is free when only other names end with it", () => {
+void test("a file name is free when only other names end with it", () => {
   assert.equal(isFileNameTaken("x.png", ["a/y.png", "a/bx.png", "x.png/z.png"]), false);
 });
