@@ -1,41 +1,73 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { InsertWindow, dropMayAddFiles, pasteMayAddFiles } from "./insert-window";
+import { InsertWindow, dropFileCount, pasteFileCount } from "./insert-window";
 
-void test("knows of no note before anything is pasted or dropped", () => {
-  assert.equal(new InsertWindow(10_000, 60_000).notePathAt(0), null);
+void test("takes no file before anything is pasted or dropped", () => {
+  assert.equal(new InsertWindow(10_000, 60_000).take(0), null);
 });
 
-void test("remembers the note for a while after a paste or drop", () => {
+function openWindow(durationMs: number, maxDurationMs: number, fileCount: number, now: number) {
+  const window = new InsertWindow(durationMs, maxDurationMs);
+  window.open("Notes/a.md", fileCount, now);
+  return window;
+}
+
+void test("takes new files for the pasted ones for a while", () => {
+  assert.equal(openWindow(10_000, 60_000, 1, 1_000).take(10_999), "Notes/a.md");
+  assert.equal(openWindow(10_000, 60_000, 1, 1_000).take(11_000), null);
+});
+
+// A file sync brings in after them is left alone.
+void test("takes only as many files as the paste or drop brings", () => {
   const window = new InsertWindow(10_000, 60_000);
-  window.open("Notes/a.md", 1_000);
-  assert.equal(window.notePathAt(1_000), "Notes/a.md");
-  assert.equal(window.notePathAt(10_999), "Notes/a.md");
-  assert.equal(window.notePathAt(11_000), null);
+  window.open("a.md", 2, 0);
+  assert.equal(window.take(100), "a.md");
+  assert.equal(window.take(200), "a.md");
+  assert.equal(window.take(300), null);
 });
 
-void test("follows the latest paste or drop and starts the wait over", () => {
+void test("follows the latest paste or drop into another note", () => {
   const window = new InsertWindow(10_000, 60_000);
-  window.open("a.md", 0);
-  window.open("b.md", 8_000);
-  assert.equal(window.notePathAt(15_000), "b.md");
+  window.open("a.md", 3, 0);
+  window.open("b.md", 1, 8_000);
+  assert.equal(window.take(15_000), "b.md");
+  assert.equal(window.take(15_100), null);
 });
 
-void test("waits longer after each image, but not past the limit", () => {
-  const window = new InsertWindow(10_000, 15_000);
-  window.open("a.md", 0);
-  window.extend(9_000);
-  assert.equal(window.notePathAt(14_999), "a.md");
-  assert.equal(window.notePathAt(15_000), null);
+// The files of the first one may still be on their way.
+void test("adds the files of another paste or drop into the same note", () => {
+  const window = new InsertWindow(10_000, 60_000);
+  window.open("a.md", 2, 0);
+  assert.equal(window.take(100), "a.md");
+  window.open("a.md", 1, 200);
+  assert.equal(window.take(300), "a.md");
+  assert.equal(window.take(400), "a.md");
+  assert.equal(window.take(500), null);
+});
+
+void test("doesn't add the files of a paste or drop that has ended", () => {
+  const window = new InsertWindow(10_000, 60_000);
+  window.open("a.md", 2, 0);
+  window.open("a.md", 1, 10_000);
+  assert.equal(window.take(10_100), "a.md");
+  assert.equal(window.take(10_200), null);
+});
+
+void test("waits longer after each file, but not past the limit", () => {
+  for (const [now, notePath] of [[14_999, "Notes/a.md"], [15_000, null]] as const) {
+    const window = openWindow(10_000, 15_000, 3, 0);
+    assert.equal(window.take(9_000), "Notes/a.md");
+    assert.equal(window.take(now), notePath);
+  }
 });
 
 void test("starts the limit over with each paste or drop", () => {
-  const window = new InsertWindow(10_000, 15_000);
-  window.open("a.md", 0);
-  window.open("a.md", 12_000);
-  window.extend(20_000);
-  assert.equal(window.notePathAt(26_999), "a.md");
-  assert.equal(window.notePathAt(27_000), null);
+  for (const [now, notePath] of [[26_999, "Notes/a.md"], [27_000, null]] as const) {
+    const window = openWindow(10_000, 15_000, 1, 0);
+    window.open("Notes/a.md", 2, 12_000);
+    assert.equal(window.take(20_000), "Notes/a.md");
+    assert.equal(window.take(now), notePath);
+  }
 });
 
 function transfer(kinds: string[], text: string, html = "") {
@@ -46,26 +78,23 @@ function transfer(kinds: string[], text: string, html = "") {
   };
 }
 
-void test("a drop may add files only if it carries some", () => {
-  assert.equal(dropMayAddFiles(transfer(["string", "file"], "a.png")), true);
-  assert.equal(dropMayAddFiles(transfer(["string"], "some text")), false);
+void test("a drop adds the files it carries", () => {
+  assert.equal(dropFileCount(transfer(["string", "file", "file"], "a.png")), 2);
+  assert.equal(dropFileCount(transfer(["string"], "some text")), 0);
 });
 
-void test("a paste may add files if it carries some or has no text", () => {
-  assert.equal(pasteMayAddFiles(transfer(["file"], "")), true);
-  assert.equal(pasteMayAddFiles(transfer(["string", "file"], "image")), true);
-  // Obsidian then takes an image or a file from the system clipboard.
-  assert.equal(pasteMayAddFiles(transfer([], "")), true);
-  assert.equal(pasteMayAddFiles(transfer(["string"], "some text")), false);
+void test("a paste adds the files it carries, or one if it has no text", () => {
+  assert.equal(pasteFileCount(transfer(["file"], "")), 1);
+  assert.equal(pasteFileCount(transfer(["string", "file", "file"], "image")), 2);
+  // Obsidian then takes one image or file from the system clipboard.
+  assert.equal(pasteFileCount(transfer([], "")), 1);
+  assert.equal(pasteFileCount(transfer(["string"], "some text")), 0);
 });
 
-// Obsidian saves PNG and JPEG images embedded in pasted or dropped HTML.
-void test("a paste or drop may add files if its HTML has embedded images", () => {
-  const html = '<p>Chart</p><img src="data:image/png;base64,iVBORw0KGgo=">';
-  assert.equal(pasteMayAddFiles(transfer(["string", "string"], "Chart", html)), true);
-  assert.equal(dropMayAddFiles(transfer(["string", "string"], "Chart", html)), true);
-  assert.equal(
-    pasteMayAddFiles(transfer(["string", "string"], "Chart", "<p>Chart</p>")),
-    false
-  );
+void test("a paste or drop adds the images embedded in its HTML", () => {
+  const html =
+    '<p>Chart</p><img src="data:image/png;base64,iVBORw0KGgo="><img src="data:image/jpeg;base64,/9j/">';
+  assert.equal(pasteFileCount(transfer(["string", "string"], "Chart", html)), 2);
+  assert.equal(dropFileCount(transfer(["string", "string"], "Chart", html)), 2);
+  assert.equal(pasteFileCount(transfer(["string", "string"], "Chart", "<p>Chart</p>")), 0);
 });

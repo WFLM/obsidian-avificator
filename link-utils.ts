@@ -61,7 +61,26 @@ export function replaceImageEmbedLinks(
   };
 }
 
-// The targets of the image embeds the matcher accepts, as it gets them.
+// Links of any kind, embedded or not, in the text or in the note's properties.
+const WIKI_LINK_PATTERN = new RegExp(`!?${WIKI_IMAGE_EMBED_PATTERN.source.slice(1)}`, "g");
+const MARKDOWN_LINK_PATTERN = new RegExp(`!?${MARKDOWN_IMAGE_EMBED_PATTERN.source.slice(1)}`, "g");
+
+export function findLinkTargets(content: string, isTarget: LinkTargetMatcher): Set<string> {
+  const targets = new Set<string>();
+  const add = (target: string): void => {
+    if (isTarget(target)) targets.add(target);
+  };
+  for (const [, innerLink = ""] of content.matchAll(WIKI_LINK_PATTERN)) {
+    const aliasIndex = innerLink.indexOf("|");
+    add((aliasIndex === -1 ? innerLink : innerLink.slice(0, aliasIndex)).trim());
+  }
+  for (const [, , rawTarget = ""] of content.matchAll(MARKDOWN_LINK_PATTERN)) {
+    const isEnclosed = rawTarget.startsWith("<") && rawTarget.endsWith(">");
+    add(decodeMarkdownTarget(isEnclosed ? rawTarget.slice(1, -1) : rawTarget));
+  }
+  return targets;
+}
+
 export function findImageEmbedTargets(
   content: string,
   isTarget: LinkTargetMatcher

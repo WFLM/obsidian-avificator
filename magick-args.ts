@@ -1,5 +1,6 @@
 export interface ConvertOptions {
   quality: number;
+  encodingSpeed: number;
   stripMetadata: boolean;
   limitImageSize: boolean;
   maxImageSize: number;
@@ -25,6 +26,9 @@ export function buildConvertArgs(inputPath: string, options: ConvertOptions): st
     ...sizeArgs,
     "-quality",
     options.quality.toString(),
+    // The AV1 encoder's speed, 6 by default in ImageMagick.
+    "-define",
+    `heic:speed=${options.encodingSpeed}`,
     "avif:-",
   ];
 }

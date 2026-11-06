@@ -1,10 +1,10 @@
-// Remembers the note something was last pasted or dropped into, for a while.
-// Images are processed only if they show up in that time, so that images sync
-// brings into an open note are left alone.
+// Remembers which note was just pasted or dropped into and how many files
+// that brings, so that images sync adds meanwhile are left alone.
 export class InsertWindow {
   private readonly durationMs: number;
   private readonly maxDurationMs: number;
   private notePath: string | null = null;
+  private fileCount = 0;
   private until = 0;
   private limit = 0;
 
@@ -13,40 +13,43 @@ export class InsertWindow {
     this.maxDurationMs = maxDurationMs;
   }
 
-  open(notePath: string, now: number): void {
+  // An earlier paste into the same note may still be saving its files.
+  open(notePath: string, fileCount: number, now: number): void {
+    const isOpen = now < this.until && this.fileCount > 0;
+    this.fileCount =
+      isOpen && this.notePath === notePath ? this.fileCount + fileCount : fileCount;
     this.notePath = notePath;
     this.until = now + this.durationMs;
     this.limit = now + this.maxDurationMs;
   }
 
-  // Waits for the next image of a multi-file paste or drop, but not past the
-  // limit, so that a stream of synced images can't keep the window open.
-  extend(now: number): void {
+  // The note for the next expected image, or null once all have come or the
+  // wait is over. Each image extends the wait, up to the limit.
+  take(now: number): string | null {
+    if (now >= this.until || this.fileCount === 0) return null;
+    this.fileCount -= 1;
     this.until = Math.min(now + this.durationMs, this.limit);
-  }
-
-  notePathAt(now: number): string | null {
-    return now < this.until ? this.notePath : null;
+    return this.notePath;
   }
 }
 
-// The parts of a paste's or drop's DataTransfer that show if it brings files.
+// The parts of a DataTransfer that show whether it brings files.
 export interface TransferContents {
   items: ArrayLike<{ kind: string }>;
   getData(format: string): string;
 }
 
-// Only a paste or drop that may add images opens the window. Obsidian saves
-// the files a drop carries, and PNG and JPEG images embedded in its HTML.
-export function dropMayAddFiles(data: TransferContents): boolean {
-  return (
-    Array.from(data.items).some((item) => item.kind === "file") ||
-    data.getData("text/html").includes("data:image/")
-  );
+// Images embedded in the HTML count too: Obsidian means to save them, though
+// a bug of its own currently stops it.
+export function dropFileCount(data: TransferContents): number {
+  const files = Array.from(data.items).filter((item) => item.kind === "file").length;
+  const embeddedImages = data.getData("text/html").split("data:image/").length - 1;
+  return files + embeddedImages;
 }
 
-// On paste, Obsidian also saves an image or a file from the system clipboard
-// when the paste has no files and no text.
-export function pasteMayAddFiles(data: TransferContents): boolean {
-  return dropMayAddFiles(data) || !data.getData("text/plain");
+// With no files and no text, Obsidian pastes one image or file from the
+// system clipboard.
+export function pasteFileCount(data: TransferContents): number {
+  const count = dropFileCount(data);
+  return count === 0 && !data.getData("text/plain") ? 1 : count;
 }

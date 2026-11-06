@@ -4,6 +4,7 @@ import { buildConvertArgs, buildFrameCountArgs, type ConvertOptions } from "./ma
 
 const BASE_OPTIONS: ConvertOptions = {
   quality: 80,
+  encodingSpeed: 8,
   stripMetadata: false,
   limitImageSize: false,
   maxImageSize: 2000,
@@ -22,6 +23,8 @@ void test("removes metadata but keeps the color profile when asked", () => {
       "!icc,*",
       "-quality",
       "80",
+      "-define",
+      "heic:speed=8",
       "avif:-",
     ]
   );
@@ -39,6 +42,8 @@ void test("keeps metadata and size when both options are off, but turns the imag
       "-auto-orient",
       "-quality",
       "55",
+      "-define",
+      "heic:speed=8",
       "avif:-",
     ]
   );
@@ -58,9 +63,19 @@ void test("shrinks only images whose longer side exceeds the limit", () => {
       "1600x1600>",
       "-quality",
       "80",
+      "-define",
+      "heic:speed=8",
       "avif:-",
     ]
   );
+});
+
+void test("passes the encoding speed to the AV1 encoder", () => {
+  assert.deepEqual(buildConvertArgs("/vault/in.jpg", { ...BASE_OPTIONS, encodingSpeed: 4 }).slice(-3), [
+    "-define",
+    "heic:speed=4",
+    "avif:-",
+  ]);
 });
 
 // The plugin adds the AVIF to the vault itself.
@@ -70,6 +85,8 @@ void test("writes the AVIF to standard output", () => {
     "-auto-orient",
     "-quality",
     "80",
+    "-define",
+    "heic:speed=8",
     "avif:-",
   ]);
 });

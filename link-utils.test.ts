@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import {
   findImageEmbedTargets,
+  findLinkTargets,
   isFileNameTaken,
   replaceImageEmbedLinks,
 } from "./link-utils";
@@ -142,4 +143,23 @@ void test("a file name is taken by a file of that name in any folder, whatever t
 
 void test("a file name is free when only other names end with it", () => {
   assert.equal(isFileNameTaken("x.png", ["a/y.png", "a/bx.png", "x.png/z.png"]), false);
+});
+
+void test("finds links of any kind, embedded or not, also in properties", () => {
+  const content = [
+    "---",
+    'cover: "[[attachments/image.png|Cover]]"',
+    "---",
+    "![[image.png]] and [Download](<attachments/image.png> \"File\")",
+    "[[other.png]] [site](https://example.com) [[image.png#Part]]",
+  ].join("\n");
+  assert.deepEqual(
+    [...findLinkTargets(content, (target) => target.endsWith(".png") || target.includes("#"))],
+    ["attachments/image.png", "image.png", "other.png", "image.png#Part"]
+  );
+  assert.deepEqual([...findLinkTargets("[Download](image%20one.png)", matchesOriginal)], []);
+  assert.deepEqual(
+    [...findLinkTargets("[Download](image%20one.png)", (target) => target === "image one.png")],
+    ["image one.png"]
+  );
 });

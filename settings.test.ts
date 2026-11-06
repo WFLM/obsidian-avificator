@@ -27,6 +27,7 @@ const ALL_FORMATS = {
 const DEFAULTS = {
   mode: "convert",
   quality: 80,
+  encodingSpeed: 8,
   magickPath: "magick",
   stripMetadata: false,
   limitImageSize: false,
@@ -48,6 +49,7 @@ void test("keeps valid stored settings and trims the ImageMagick path", () => {
     parseSettings({
       mode: "rename",
       quality: 55,
+      encodingSpeed: 4,
       magickPath: "  /opt/homebrew/bin/magick  ",
       stripMetadata: true,
       limitImageSize: true,
@@ -62,6 +64,7 @@ void test("keeps valid stored settings and trims the ImageMagick path", () => {
     {
       mode: "rename",
       quality: 55,
+      encodingSpeed: 4,
       magickPath: "/opt/homebrew/bin/magick",
       stripMetadata: true,
       limitImageSize: true,
@@ -92,6 +95,7 @@ void test("falls back to defaults for invalid stored values", () => {
     parseSettings({
       mode: "pause",
       quality: 101,
+      encodingSpeed: 5,
       magickPath: "   ",
       stripMetadata: "yes",
       limitImageSize: "on",
@@ -109,6 +113,7 @@ void test("falls back to defaults for invalid stored values", () => {
     parseSettings({
       mode: 1,
       quality: 12.5,
+      encodingSpeed: "8",
       magickPath: 42,
       stripMetadata: 0,
       limitImageSize: 1,

@@ -10,12 +10,18 @@ export interface FormatActions {
   convert: boolean;
 }
 
-export const ANIMATED_IMAGE_ACTIONS = ["ask", "rename", "skip"] as const;
+// The AV1 encoder's speed, which ImageMagick passes on. Slower ones make files
+// only a little smaller, and below 4 a photo can take minutes.
+export const ENCODING_SPEEDS = [8, 6, 4] as const;
+export type EncodingSpeed = (typeof ENCODING_SPEEDS)[number];
+
+const ANIMATED_IMAGE_ACTIONS = ["ask", "rename", "skip"] as const;
 export type AnimatedImageAction = (typeof ANIMATED_IMAGE_ACTIONS)[number];
 
-export interface AVIFPluginSettings {
+export interface AVIFicatorSettings {
   mode: Mode;
   quality: number;
+  encodingSpeed: EncodingSpeed;
   magickPath: string;
   stripMetadata: boolean;
   limitImageSize: boolean;
@@ -28,9 +34,10 @@ export interface AVIFPluginSettings {
   showStatusBar: boolean;
 }
 
-export const DEFAULT_SETTINGS: AVIFPluginSettings = {
+export const DEFAULT_SETTINGS: AVIFicatorSettings = {
   mode: "convert",
   quality: 80,
+  encodingSpeed: 8,
   magickPath: "magick",
   stripMetadata: false,
   limitImageSize: false,
@@ -78,6 +85,10 @@ export function validateQuality(value: unknown): number | null {
   return value;
 }
 
+export function isEncodingSpeed(value: unknown): value is EncodingSpeed {
+  return ENCODING_SPEEDS.some((speed) => speed === value);
+}
+
 export function validateMaxImageSize(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
     return null;
@@ -104,7 +115,7 @@ export function normalizeMagickPath(value: unknown): string {
   return trimmed || DEFAULT_SETTINGS.magickPath;
 }
 
-export function parseSettings(storedData: unknown): AVIFPluginSettings {
+export function parseSettings(storedData: unknown): AVIFicatorSettings {
   const stored =
     typeof storedData === "object" && storedData !== null
       ? (storedData as Record<string, unknown>)
@@ -113,6 +124,9 @@ export function parseSettings(storedData: unknown): AVIFPluginSettings {
   return {
     mode: isMode(stored.mode) ? stored.mode : DEFAULT_SETTINGS.mode,
     quality: validateQuality(stored.quality) ?? DEFAULT_SETTINGS.quality,
+    encodingSpeed: isEncodingSpeed(stored.encodingSpeed)
+      ? stored.encodingSpeed
+      : DEFAULT_SETTINGS.encodingSpeed,
     magickPath: normalizeMagickPath(stored.magickPath),
     stripMetadata:
       typeof stored.stripMetadata === "boolean"

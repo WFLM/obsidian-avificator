@@ -1,24 +1,26 @@
 # AVIFicator
 
-Automatically converts newly added PNG, JPEG, WEBP, HEIC, GIF, BMP, TIFF, and
-JPEG XL images in your notes to AVIF format using ImageMagick (`magick`
-command), and renames them, as well as AVIF images, using a template.
+AVIFicator converts images you paste or drop into Obsidian notes to AVIF with
+ImageMagick and renames them using a template. It converts PNG, JPEG, WEBP,
+HEIC, GIF, BMP, TIFF, and JPEG XL images; AVIF images are only renamed.
 
 ## Features
 
 - Converts images right after you add them to a note.
-- Renames images using a template: the note title and a precise timestamp
-  by default.
+- Renames images using a template: the note title and a precise timestamp by
+  default.
 - Updates Obsidian wiki embeds and Markdown image links.
 - Can remove EXIF data, such as GPS location, from converted images.
 - Can shrink large images to a maximum size.
 - Keeps the original image if conversion or link replacement fails.
-- Never converts animated or multi-page images, so nothing is lost.
+- Never converts animated or multi-page images, so no frames or pages are
+  lost.
 - Copies images that Obsidian would only paste as a `file:///` address when
   they are dragged from a file manager, as happens on Linux with Wayland.
-- Switches between converting, only renaming, and doing nothing right from
-  the status bar or the command palette.
-- Lets you configure AVIF image quality from 0 to 100.
+- Keeps several images pasted or dropped into a quote or callout inside it.
+- Switches between converting, only renaming, and doing nothing from the
+  status bar or the command palette.
+- Lets you set the AVIF quality and encoding speed.
 
 ## Installation
 
@@ -75,16 +77,18 @@ The build creates `main.js` in the plugin folder.
   [Input formats](#input-formats) are converted and renamed by default; you
   can choose which formats are renamed, converted, or both.
 - The plugin will:
-  - Convert it to `.avif` using the configured quality.
+  - Convert it to `.avif` using the configured quality and encoding speed.
   - Remove its EXIF and XMP metadata, if you turn this on.
   - Shrink it to the maximum size, if you turn this on.
   - Rename it using the [file name template](#file-name-template), or keep
     its name if renaming is off for the format.
   - Replace the original image link with the new AVIF link.
-  - Delete the original only after the link is updated successfully. The
-    original is the file Obsidian created in the vault for the paste or drop;
-    a file dragged from a folder stays where it is.
-  - Preserve the original and notify you if conversion fails.
+  - Delete the original only after the link is updated successfully, and only
+    if nothing else links to it. The original is the file Obsidian created in
+    the vault for the paste or drop; a file dragged from a folder stays where
+    it is.
+  - Preserve the original and notify you if conversion fails, or if the image
+    is changed or moved while it is converted or renamed.
 - Only images you paste or drop into a note are processed. Images that reach
   the vault in other ways, for example through sync while the note is open on
   another device or from other plugins, are left alone.
@@ -192,6 +196,11 @@ These options apply only in **Convert to AVIF** mode, to formats with
 **Image quality:** enter a whole number from 0 (lowest) to 100 (highest).
 The default value is 80.
 
+**Encoding speed:** **Fast** (default), **Normal**, or **Slow**: the AV1
+encoder speed 8, 6 (ImageMagick's own default), or 4. Normal and Slow make
+files 1 to 4% smaller with the same quality to the eye, but encode about 2 to
+3 and more than 10 times slower than Fast.
+
 **Remove metadata:** off by default. Removes EXIF and XMP data, including GPS
 location and camera details. The image is rotated according to its EXIF
 orientation first, so it stays upright, and its color profile is kept.
@@ -213,6 +222,8 @@ Below the field, the plugin shows whether it found ImageMagick, its version,
 whether it can write AVIF, and which of the plugin's input formats it can read,
 whether they are turned on or not.
 What works is shown in green, what doesn't in orange.
+ImageMagick is checked when you open the plugin settings and when you change
+the path, so after installing or updating it, reopen the settings.
 
 ### Input formats
 
