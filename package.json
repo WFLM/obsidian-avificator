@@ -1,6 +1,6 @@
 {
   "name": "avificator",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Obsidian plugin to convert images to AVIF automatically",
   "license": "MIT",
   "main": "main.js",

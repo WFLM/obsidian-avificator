@@ -695,7 +695,6 @@ export default class AVIFicatorPlugin extends Plugin {
   ): Promise<OutputTarget> {
     const folderPath = file.path.substring(0, file.path.lastIndexOf("/") + 1);
     const values = fileNameValues(sourceNote.basename, file.basename, new Date());
-    const vaultPaths = this.app.vault.getFiles().map((candidate) => candidate.path);
 
     for (let attempt = 0; ; attempt += 1) {
       const stem = rename
@@ -710,9 +709,11 @@ export default class AVIFicatorPlugin extends Plugin {
       // An image may keep its own name, or change only its case, which file
       // systems that ignore case report as taken.
       const isOwnPath = vaultPath.toLowerCase() === file.path.toLowerCase();
+      // A link by name alone, as Obsidian writes it, must find only the new
+      // image, so the name is checked in every folder, ignoring case.
       const isFree =
         isOwnPath ||
-        (!isFileNameTaken(fileName, vaultPaths) &&
+        (!this.app.metadataCache.getFirstLinkpathDest(fileName, "") &&
           !(await this.app.vault.adapter.exists(vaultPath)));
 
       // Other images may be getting names at the same time, in any folder.

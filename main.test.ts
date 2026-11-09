@@ -455,10 +455,8 @@ void test("a drop another plugin has handled leaves new images alone", () => {
 // A template may have a no-break space, or a letter and its accent typed apart.
 void test("output names have the spaces and letters the vault saves them with", async () => {
   const plugin = createPlugin({
-    vault: {
-      getFiles: (): TFile[] => [],
-      adapter: { exists: async (): Promise<boolean> => false },
-    },
+    vault: { adapter: { exists: async (): Promise<boolean> => false } },
+    metadataCache: { getFirstLinkpathDest: (): TFile | null => null },
   });
   plugin.settings.fileNameTemplate = "Cafe\u0301\u00A0{counter}";
   plugin.settings.replaceSpaces = false;
@@ -471,6 +469,30 @@ void test("output names have the spaces and letters the vault saves them with", 
 
   assert.equal(target.fileName, "Caf\u00E9 000.avif");
   assert.equal(target.vaultPath, "attachments/Caf\u00E9 000.avif");
+});
+
+// A link by name alone would resolve to the other file, whatever its folder or
+// case.
+void test("output names skip names other files in the vault have", async () => {
+  const taken = file("Work/SHOT 000.avif");
+  const plugin = createPlugin({
+    vault: { adapter: { exists: async (): Promise<boolean> => false } },
+    metadataCache: {
+      // As Obsidian resolves a link that is only a name.
+      getFirstLinkpathDest: (linkpath: string): TFile | null =>
+        linkpath.toLowerCase() === taken.name.toLowerCase() ? taken : null,
+    },
+  });
+  plugin.settings.fileNameTemplate = "Shot {counter}";
+  plugin.settings.replaceSpaces = false;
+
+  const target = await plugin.reserveOutputTarget(
+    file("attachments/image.png"),
+    file("note.md"),
+    "avif"
+  );
+
+  assert.equal(target.vaultPath, "attachments/Shot 001.avif");
 });
 
 for (const action of ["renaming", "conversion"] as const) {

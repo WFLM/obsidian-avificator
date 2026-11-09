@@ -83,10 +83,10 @@ The build creates `main.js` in the plugin folder.
   - Rename it using the [file name template](#file-name-template), or keep
     its name if renaming is off for the format.
   - Replace the original image link with the new AVIF link.
-  - Delete the original only after the link is updated successfully, and only
-    if nothing else links to it. The original is the file Obsidian created in
-    the vault for the paste or drop; a file dragged from a folder stays where
-    it is.
+  - Delete the original permanently, without moving it to the trash, only
+    after the link is updated successfully, and only if nothing else links to
+    it. The original is the file Obsidian created in the vault for the paste
+    or drop; a file dragged from a folder stays where it is.
   - Preserve the original and notify you if conversion fails, or if the image
     is changed or moved while it is converted or renamed.
 - Only images you paste or drop into a note are processed. Images that reach
@@ -259,13 +259,14 @@ in orange: such images can only be renamed.
 ## Privacy
 
 - The plugin doesn't use the network and doesn't collect or send any data.
-- It runs ImageMagick (the `magick` command, or the path set in the settings)
-  on your computer to convert images and to check which formats it supports.
-  Your images never leave your computer.
+- The only program it starts is ImageMagick (the `magick` command, or the
+  path set in the settings), directly and without a shell, to convert images
+  and to check which formats it supports. Your images never leave your
+  computer.
 - It reads files outside the vault only when **Copy dragged images
   (file:/// links)** is on and you drag an image from a file manager: it reads
-  that image to copy it into the vault. The dragged file itself is never
-  changed or deleted.
+  that image to copy it into the vault. It never writes or deletes anything
+  outside the vault.
 
 ## Troubleshooting
 

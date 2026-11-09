@@ -106,9 +106,9 @@ function decodeMarkdownTarget(target: string): string {
 
 // Links by bare name ignore case and folders, so a name used anywhere in the
 // vault would make such a link ambiguous.
-export function isFileNameTaken(fileName: string, vaultPaths: readonly string[]): boolean {
+export function isFileNameTaken(fileName: string, paths: readonly string[]): boolean {
   const lowerCased = fileName.toLowerCase();
-  return vaultPaths.some(
+  return paths.some(
     (path) => path.slice(path.lastIndexOf("/") + 1).toLowerCase() === lowerCased
   );
 }
